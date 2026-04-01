@@ -1,0 +1,1 @@
+"""Recruitment logging package."""

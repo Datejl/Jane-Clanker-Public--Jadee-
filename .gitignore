@@ -1,0 +1,73 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# === Virtual Environments ===
+.venv/
+venv/
+env/
+env
+ENV/
+
+# === Build / Packaging ===
+build/
+dist/
+.eggs/
+*.egg-info/
+pip-wheel-metadata/
+
+# === IDE / Editor ===
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# === OS Files ===
+.DS_Store
+Thumbs.db
+
+# === Runtime / Local Data ===
+*.log
+logs/
+localOnly/
+scripts/
+bot.db
+bot.db-shm
+bot.db-wal
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+runtime/data/
+silly/archives/
+
+# === Temp Files ===
+tmp/
+temp/
+*.tmp
+*.bak
+
+# === Secrets / Credentials ===
+.env
+.env.*
+!.env.example
+config.local.py
+config.secrets.py
+*credentials*.json
+*service-account*.json
+jane-clanker-*.json
+
+# === Large Local Artifacts ===
+*.mp4
+*.mov
+*.avi

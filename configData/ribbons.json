@@ -1,0 +1,90 @@
+{
+  "defaultEligibilityType": "PROOF_REQUIRED",
+  "rules": [
+    {
+      "displayName": "Emergency Certification",
+      "eligibilityType": "ROLE_AUTO",
+      "requiredRoleIds": [
+        1383568801420939416
+      ]
+    },
+    {
+      "displayName": "Evil Certification",
+      "eligibilityType": "ROLE_AUTO",
+      "requiredRoleIds": [
+        1385818988948492329
+      ]
+    },
+    {
+      "displayName": "Formation Certification",
+      "eligibilityType": "ROLE_AUTO",
+      "requiredRoleIds": [
+        1411482428777697301
+      ]
+    },
+    {
+      "displayName": "Grid Certification",
+      "eligibilityType": "ROLE_AUTO",
+      "requiredRoleIds": [
+        1423037547902140629
+      ]
+    },
+    {
+      "displayName": "Jolly Certification",
+      "eligibilityType": "ROLE_AUTO",
+      "requiredRoleIds": [
+        1444143319713058876
+      ]
+    },
+    {
+      "displayName": "Lovely Certification",
+      "eligibilityType": "ROLE_AUTO",
+      "requiredRoleIds": [
+        1471619559810142301
+      ]
+    },
+    {
+      "displayName": "Sleep Certification",
+      "eligibilityType": "ROLE_AUTO",
+      "requiredRoleIds": [
+        1444817220613050550
+      ]
+    },
+    {
+      "displayName": "Solo Certification",
+      "eligibilityType": "ROLE_AUTO",
+      "requiredRoleIds": [
+        1383568721854861383
+      ]
+    },
+    {
+      "displayName": "Spooky Certification",
+      "eligibilityType": "ROLE_AUTO",
+      "requiredRoleIds": [
+        1432097376239095848
+      ]
+    },
+    {
+      "displayName": "Supervisor Certification",
+      "eligibilityType": "ROLE_AUTO",
+      "requiredRoleIds": [
+        1416983996772126841
+      ]
+    },
+    {
+      "displayName": "Tempered Certification",
+      "eligibilityType": "ROLE_AUTO",
+      "requiredRoleIds": [
+        1447800723612893337
+      ]
+    },
+    {
+      "displayName": "Turbine Certification",
+      "eligibilityType": "ROLE_AUTO",
+      "requiredRoleIds": [
+        1394021124484104213
+      ]
+    }
+  ],
+  "requestCooldownMinutes": 5
+}

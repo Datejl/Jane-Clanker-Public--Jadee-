@@ -1,0 +1,587 @@
+[
+  {
+    "divisionKey": "ANRD",
+    "sheetKey": "dept_anrd",
+    "sheetName": "ANRD",
+    "membersStartRow": 3,
+    "membersEndRow": 49,
+    "membersScanEndRow": 400,
+    "membersStopEmptyRun": 3,
+    "usernameColumn": "B",
+    "rankColumn": "D",
+    "sortStartColumn": "B",
+    "sortEndColumn": "L",
+    "sectionHeaders": [
+      "Dept. Lead",
+      "Members"
+    ],
+    "enforceSectionSpacers": false,
+    "managedSectionHeaders": [
+      "Members"
+    ],
+    "insertSectionHeader": "Members",
+    "rankOrder": [
+      "Development Creator and Director",
+      "Development Oversight",
+      "Development Project Lead",
+      "Senior Developer",
+      "Developer",
+      "Contributer",
+      "Contributor",
+      "Probationary",
+      "pending removal"
+    ],
+    "sectionRankOrder": {
+      "Members": [
+        "Development Creator and Director",
+        "Development Oversight",
+        "Development Project Lead",
+        "Senior Developer",
+        "Developer",
+        "Contributer",
+        "Contributor",
+        "Probationary",
+        "pending removal"
+      ]
+    },
+    "formatStartColumn": "B",
+    "formatEndColumn": "L",
+    "boldColumns": [
+      "B"
+    ],
+    "fontFamily": "Abel",
+    "fontSize": 10,
+    "defaultColumnValues": {
+      "C": "ANRO Development",
+      "D": "Probationary",
+      "F": "N/A",
+      "H": "",
+      "J": "Active",
+      "K": "Y",
+      "L": ""
+    }
+  },
+  {
+    "divisionKey": "CE",
+    "sheetKey": "dept_ce",
+    "sheetName": "CE",
+    "membersStartRow": 3,
+    "membersScanEndRow": 400,
+    "membersStopEmptyRun": 3,
+    "preserveTrailingVisualRow": true,
+    "usernameColumn": "B",
+    "rankColumn": "D",
+    "sortStartColumn": "B",
+    "sortEndColumn": "H",
+    "rankOrder": [
+      "External Coordinator",
+      "Internal Coordinator",
+      "Manager",
+      "Section Chief",
+      "Employee",
+      "Retired"
+    ],
+    "sectionHeaders": [
+      "Management",
+      "Employees",
+      "Retired Personnel"
+    ],
+    "sectionRankOrder": {
+      "Management": [
+        "External Coordinator",
+        "Internal Coordinator",
+        "Manager",
+        "Section Chief"
+      ],
+      "Employees": [
+        "Employee"
+      ],
+      "Retired Personnel": [
+        "Retired"
+      ]
+    },
+    "insertSectionHeader": "Employees",
+    "formatStartColumn": "B",
+    "formatEndColumn": "H",
+    "boldColumns": [
+      "B",
+      "C",
+      "D",
+      "E",
+      "F",
+      "G",
+      "H"
+    ],
+    "fontFamily": "Abel",
+    "fontSize": 12,
+    "columnBorderOverrides": [
+      {
+        "startColumn": "E",
+        "endColumn": "G",
+        "topStyle": "SOLID",
+        "bottomStyle": "SOLID",
+        "leftStyle": "SOLID_MEDIUM",
+        "rightStyle": "SOLID_MEDIUM",
+        "innerHorizontalStyle": "SOLID",
+        "innerVerticalStyle": "SOLID_MEDIUM"
+      }
+    ],
+    "defaultColumnValues": {
+      "C": "External",
+      "D": "Employee",
+      "E": "0",
+      "F": "0",
+      "G": "0",
+      "H": ""
+    }
+  },
+  {
+    "divisionKey": "LO",
+    "sheetKey": "dept_lo",
+    "sheetName": "LO",
+    "membersStartRow": 3,
+    "membersScanEndRow": 300,
+    "membersStopEmptyRun": 3,
+    "usernameColumn": "B",
+    "rankColumn": "D",
+    "sortStartColumn": "B",
+    "sortEndColumn": "F",
+    "sectionHeaders": [
+      "Management",
+      "Employees",
+      "Retired"
+    ],
+    "sectionRankOrder": {
+      "Management": [
+        "Director of Logistics and Human Resources",
+        "Dept Director of LO&D",
+        "Dept Director of LHR"
+      ],
+      "Employees": [
+        "Senior Logistics Coordinator",
+        "Logistics Coordinator",
+        "Logistic Coordinator"
+      ],
+      "Retired": [
+        "Retired"
+      ]
+    },
+    "insertSectionHeader": "Employees",
+    "formatStartColumn": "B",
+    "formatEndColumn": "F",
+    "boldColumns": [
+      "B",
+      "C",
+      "D",
+      "E",
+      "F"
+    ],
+    "fontFamily": "Abel",
+    "fontSize": 14,
+    "defaultColumnValues": {
+      "C": "LO",
+      "D": "Logistics Coordinator",
+      "E": "FALSE",
+      "F": ""
+    }
+  },
+  {
+    "divisionKey": "TQUAL",
+    "sheetKey": "dept_tqual",
+    "sheetName": "TQUAL",
+    "membersStartRow": 4,
+    "membersScanEndRow": 260,
+    "membersStopEmptyRun": 3,
+    "usernameColumn": "B",
+    "rankColumn": "C",
+    "sortStartColumn": "B",
+    "sortEndColumn": "H",
+    "sectionHeaders": [
+      "Management",
+      "Employees",
+      "Probies",
+      "Retirees"
+    ],
+    "managedSectionHeaders": [
+      "Management",
+      "Employees",
+      "Probies",
+      "Retirees"
+    ],
+    "rankOrder": [
+      "Section Chief",
+      "Admin",
+      "Officer",
+      "Senior Instructor",
+      "Instructor",
+      "Probationary",
+      "Retired"
+    ],
+    "sectionRankOrder": {
+      "Management": [
+        "Section Chief",
+        "Admin",
+        "Officer"
+      ],
+      "Employees": [
+        "Senior Instructor",
+        "Instructor"
+      ],
+      "Probies": [
+        "Probationary"
+      ],
+      "Retirees": [
+        "Retired"
+      ]
+    },
+    "sectionSortLockedTailRules": {
+      "Retirees": {
+        "anyNonEmptyColumns": [
+          "D",
+          "E"
+        ],
+        "requiredColumnValues": {
+          "C": "Retired"
+        }
+      },
+      "Management": {
+        "anyNonEmptyColumns": [
+          "D",
+          "E"
+        ],
+        "requiredColumnValues": {
+          "C": "Retired"
+        }
+      }
+    },
+    "insertSectionHeader": "Probies",
+    "upsertDateColumns": [
+      {
+        "column": "D",
+        "monthsOffset": 1,
+        "formatStyle": "monDayDot",
+        "onlyWhenCreated": true
+      }
+    ],
+    "formatStartColumn": "B",
+    "formatEndColumn": "H",
+    "boldColumns": [
+      "B",
+      "C",
+      "D",
+      "E",
+      "F",
+      "G",
+      "H"
+    ],
+    "fontFamily": "Abel",
+    "fontSize": 14,
+    "defaultColumnValues": {
+      "C": "Probationary",
+      "D": "",
+      "E": "Active",
+      "F": "",
+      "G": "N/A",
+      "H": ""
+    },
+    "sectionHeaderAliases": {
+      "Employees": [
+        "Management"
+      ],
+      "Probies": [
+        "Probationary",
+        "Probation"
+      ],
+      "Retirees": [
+        "Retired",
+        "Retirees"
+      ]
+    }
+  },
+  {
+    "divisionKey": "NIRI",
+    "sheetKey": "dept_niri",
+    "sheetName": "NIRI",
+    "membersStartRow": 3,
+    "membersScanEndRow": 200,
+    "membersStopEmptyRun": 3,
+    "usernameColumn": "C",
+    "rankColumn": "D",
+    "sortStartColumn": "C",
+    "sortEndColumn": "G",
+    "sectionHeaders": [
+      "Management",
+      "Chief Researcher",
+      "Researchers"
+    ],
+    "managedSectionHeaders": [
+      "Management",
+      "Chief Researcher",
+      "Researchers"
+    ],
+    "rankOrder": [
+      "Director of Research",
+      "Deputy Director of Research",
+      "Research Officer",
+      "Chief Researcher",
+      "Senior Researcher",
+      "Researcher"
+    ],
+    "sectionRankOrder": {
+      "Management": [
+        "Director of Research",
+        "Deputy Director of Research",
+        "Research Officer"
+      ],
+      "Chief Researcher": [
+        "Chief Researcher"
+      ],
+      "Researchers": [
+        "Senior Researcher",
+        "Researcher"
+      ]
+    },
+    "insertSectionHeader": "Researchers",
+    "formatStartColumn": "C",
+    "formatEndColumn": "G",
+    "boldColumns": [
+      "C",
+      "D",
+      "E",
+      "F",
+      "G"
+    ],
+    "fontFamily": "Abel",
+    "fontSize": 14,
+    "defaultColumnValues": {
+      "D": "Researcher",
+      "E": "TRUE",
+      "F": "0",
+      "G": ""
+    }
+  },
+  {
+    "divisionKey": "ANLD",
+    "sheetKey": "dept_anld",
+    "sheetName": "ANLD",
+    "membersStartRow": 3,
+    "membersScanEndRow": 500,
+    "membersStopEmptyRun": 3,
+    "usernameColumn": "B",
+    "rankColumn": "C",
+    "sortStartColumn": "B",
+    "sortEndColumn": "E",
+    "sectionHeaders": [
+      "Management",
+      "Department of Acting",
+      "Temporary Members",
+      "Department of Production",
+      "Department of Naration",
+      "Lore Commisioner"
+    ],
+    "managedSectionHeaders": [
+      "Department of Acting",
+      "Temporary Members",
+      "Department of Production",
+      "Department of Naration",
+      "Lore Commisioner"
+    ],
+    "insertSectionHeader": "Temporary Members",
+    "rankOrder": [
+      "Lore Director",
+      "Assistant Lore Director",
+      "Assistant Assistant Lore Director",
+      "Head of Acting",
+      "Acting Supervisor",
+      "Senior Actor",
+      "Actor",
+      "Head of Production",
+      "Senior Producer",
+      "Producer",
+      "Head of Narration",
+      "Head of Naration",
+      "Senior Narrator",
+      "Narrator",
+      "Head Commissioner",
+      "Senior Commissioner",
+      "Commissioner"
+    ],
+    "sectionRankOrder": {
+      "Management": [
+        "Lore Director",
+        "Assistant Lore Director",
+        "Assistant Assistant Lore Director"
+      ],
+      "Department of Acting": [
+        "Head of Acting",
+        "Acting Supervisor",
+        "Senior Actor",
+        "Actor"
+      ],
+      "Temporary Members": [
+        "Senior Actor",
+        "Actor"
+      ],
+      "Department of Production": [
+        "Head of Production",
+        "Senior Producer",
+        "Producer"
+      ],
+      "Department of Naration": [
+        "Head of Narration",
+        "Head of Naration",
+        "Senior Narrator",
+        "Narrator"
+      ],
+      "Lore Commisioner": [
+        "Head Commissioner",
+        "Senior Commissioner",
+        "Commissioner"
+      ]
+    },
+    "formatStartColumn": "B",
+    "formatEndColumn": "E",
+    "boldColumns": [
+      "B",
+      "C",
+      "D",
+      "E"
+    ],
+    "fontFamily": "Abel",
+    "fontSize": 14,
+    "defaultColumnValues": {
+      "C": "Actor",
+      "D": "VA",
+      "E": ""
+    }
+  },
+  {
+    "divisionKey": "A&A",
+    "sheetKey": "dept_aa",
+    "sheetName": "A&A",
+    "membersStartRow": 3,
+    "membersScanEndRow": 220,
+    "membersStopEmptyRun": 3,
+    "usernameColumn": "A",
+    "rankColumn": "B",
+    "sortStartColumn": "A",
+    "sortEndColumn": "G",
+    "sectionHeaders": [
+      "Dept. Lead",
+      "Members",
+      "Probation"
+    ],
+    "enforceSectionSpacers": false,
+    "managedSectionHeaders": [
+      "Members",
+      "Probation"
+    ],
+    "rankOrder": [
+      "A&A Coordinator",
+      "Inspection Coordinator",
+      "Supervisory Inspector",
+      "Probationary Inspector"
+    ],
+    "sectionRankOrder": {
+      "Dept. Lead": [
+        "A&A Coordinator"
+      ],
+      "Members": [
+        "Inspection Coordinator"
+      ],
+      "Probation": [
+        "Supervisory Inspector",
+        "Probationary Inspector"
+      ]
+    },
+    "insertSectionHeader": "Probation",
+    "formatStartColumn": "A",
+    "formatEndColumn": "G",
+    "boldColumns": [
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "F",
+      "G"
+    ],
+    "fontFamily": "Abel",
+    "fontSize": 12,
+    "defaultColumnValues": {
+      "B": "Probationary Inspector",
+      "D": "Active",
+      "E": "Active",
+      "F": "XX/XX",
+      "G": "FALSE"
+    }
+  },
+  {
+    "divisionKey": "MSB",
+    "sheetKey": "dept_msb",
+    "sheetName": "MSB",
+    "membersStartRow": 3,
+    "membersScanEndRow": 220,
+    "membersStopEmptyRun": 3,
+    "usernameColumn": "B",
+    "rankColumn": "D",
+    "sortStartColumn": "B",
+    "sortEndColumn": "F",
+    "sectionHeaders": [
+      "Management",
+      "Moderators",
+      "Retired"
+    ],
+    "managedSectionHeaders": [
+      "Management",
+      "Moderators"
+    ],
+    "rankOrder": [
+      "Director",
+      "Deputy Director",
+      "Moderation Supervisor",
+      "Lead Moderator",
+      "Senior Moderator",
+      "Moderator",
+      "Probationary Moderator",
+      "N/A"
+    ],
+    "sectionRankOrder": {
+      "Management": [
+        "Director",
+        "Deputy Director"
+      ],
+      "Moderators": [
+        "Moderation Supervisor",
+        "Lead Moderator",
+        "Senior Moderator",
+        "Moderator",
+        "Probationary Moderator"
+      ],
+      "Retired": [
+        "Senior Moderator",
+        "Moderator",
+        "Probationary Moderator",
+        "N/A"
+      ]
+    },
+    "insertSectionHeader": "Moderators",
+    "formatStartColumn": "B",
+    "formatEndColumn": "F",
+    "boldColumns": [
+      "B",
+      "C",
+      "D",
+      "E",
+      "F"
+    ],
+    "fontFamily": "Abel",
+    "fontSize": 12,
+    "defaultColumnValues": {
+      "C": "MSB",
+      "D": "Probationary Moderator",
+      "E": "Active",
+      "F": ""
+    }
+  }
+]

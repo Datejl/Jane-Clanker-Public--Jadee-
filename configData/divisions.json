@@ -1,0 +1,325 @@
+{
+  "divisions": [
+    {
+      "key": "tqual",
+      "displayName": "Training & Qualifications",
+      "description": "Training & Qualifications is responsible for educating and certifying members within ANRO. This department develops training materials, hosts certification sessions, and ensures that all instructional documentation stays accurate and up to date with the game.",
+      "requirements": "Must hold the rank of Shift Supervisor or higher. Applicants should be confident communicators, patient when teaching others, and comfortable hosting structured training sessions.",
+      "whatYouDo": "You are trained to train others. Members host certification sessions, teach reactor procedures, update instructional documentation when systems change, and maintain the overall quality and consistency of ANRO's training standards.",
+      "bannerUrl": "",
+      "hubMessageName": "Training & Qualifications",
+      "hubMessageAvatarUrl": "https://media.discordapp.net/attachments/1373450368259719168/1470540052403847288/image.png?ex=6992eae5&is=69919965&hm=56e3329332e5a8230de77ee2d24ec8207819df5c7e895676d4fefb04e4052b10&=&format=webp&quality=lossless",
+      "grantRoleIds": [
+        1469871362553286894
+      ],
+      "reviewerRoleIds": [
+        1470837740299092113
+      ],
+      "autoAcceptGroupId": 559648241,
+      "seedOrbatOnApprove": true,
+      "eligibility": {
+        "requiredRoleIds": [
+          1470837921694355569
+        ],
+        "denyMessage": "You have been denied entry into Training and Qualifications. Please reapply."
+      },
+      "questions": [
+        {
+          "key": "tqualform",
+          "label": "Google Forms Link:",
+          "required": true,
+          "style": "form",
+          "link": "https://docs.google.com/forms/d/e/1FAIpQLSfU2cwMAbyw4OLrUOo-Ex4iknMTz_c0qdLYzu-3b8G9LmOEdw/viewform?usp=dialog"
+        }
+      ],
+      "requiresProof": false,
+      "proofPrompt": ""
+    },
+    {
+      "key": "anrd",
+      "displayName": "Advanced Nuclear Reactor Development",
+      "description": "ANRD maintains and develops ANRO's internal Multi-Center facility. This space is used for trainings, events, and department operations, providing ANRO with a controlled environment separate from the main game.",
+      "requirements": "A portfolio required. This may include scripting, programming, animation, modeling, or other technical Roblox development skills. Collaboration and reliability are essential.",
+      "whatYouDo": "You develop and maintain the Multi-Center. Members script systems, build environments, create animations, design models, and implement features that support trainings and large-scale events.",
+      "bannerUrl": "",
+      "hubMessageName": "ANRD",
+      "hubMessageAvatarUrl": "https://media.discordapp.net/attachments/1474467341122408680/1474476729535037693/ANRD-final.png?ex=699b4e76&is=6999fcf6&hm=b9dedc001a2fc6a010217ecc5b51c64612eb15a74f8819b01135e51b06b087a8&=&format=webp&quality=lossless",
+      "grantRoleIds": [],
+      "reviewerRoleIds": [],
+      "autoAcceptGroupId": 498336668,
+      "seedOrbatOnApprove": true,
+      "eligibility": {
+        "requiredRoleIds": [],
+        "denyMessage": ""
+      },
+      "questions": [
+        {
+          "key": "anrdform",
+          "label": "Google Forms Link:",
+          "required": true,
+          "style": "form",
+          "link": "https://docs.google.com/forms/d/e/1FAIpQLSeyFmukgKnwWWXYvvaBENkcgIkFtyLC7Bxsqbimeq3maiLyjw/viewform?usp=dialog"
+        }
+      ],
+      "requiresProof": false,
+      "proofPrompt": ""
+    },
+    {
+      "key": "anld",
+      "displayName": "Advanced Noobic Lore Department",
+      "description": "ANLD creates original lore for ANRO's internal universe. While not affiliated with the official game storyline, this department builds stories, narratives, and worldbuilding elements that expand ANRO's identity.",
+      "requirements": "Strong writing ability, creativity, and interest in storytelling. Members should be able to collaborate and maintain internal consistency within ANRO's established lore.",
+      "whatYouDo": "You write and expand ANRO's internal story. Members create characters, develop narratives, build historical arcs, and craft immersive content that strengthens the group's shared identity.",
+      "bannerUrl": "",
+      "hubMessageName": "Lore Department",
+      "hubMessageAvatarUrl": "",
+      "grantRoleIds": [],
+      "reviewerRoleIds": [],
+      "autoAcceptGroupId": 0,
+      "seedOrbatOnApprove": true,
+      "eligibility": {
+        "requiredRoleIds": [],
+        "denyMessage": ""
+      },
+      "questions": [
+        {
+          "key": "anldjoinServer",
+          "label": "Join the Division Server",
+          "style": "server-invite",
+          "inviteUrl": "https://discord.gg/xKZQTr7vA3"
+        }
+      ],
+      "requiresProof": false,
+      "proofPrompt": ""
+    },
+    {
+      "key": "anrors",
+      "displayName": "ANRO Recruitment Service",
+      "description": "ANRORS recruits new members directly from the Naramo game. This department introduces players to ANRO, explains what the group offers, and helps bring in new talent.",
+      "requirements": "Strong communication skills, professionalism in public servers, and a positive attitude. Members must represent ANRO respectfully at all times.",
+      "whatYouDo": "You enter public game servers, speak with players, and introduce them to ANRO. Members answer questions, explain our structure and culture, and guide interested players toward joining the community.",
+      "bannerUrl": "",
+      "hubMessageName": "Recruitment Service",
+      "hubMessageAvatarUrl": "",
+      "grantRoleIds": [],
+      "reviewerRoleIds": [],
+      "autoAcceptGroupId": 0,
+      "seedOrbatOnApprove": true,
+      "eligibility": {
+        "requiredRoleIds": [],
+        "denyMessage": ""
+      },
+      "questions": [
+        {
+          "key": "anrorsq1",
+          "label": "Why do you want to join ANRORS?",
+          "style": "server-invite",
+          "inviteUrl": "https://discord.gg/xKZQTr7vA3"
+        }
+      ],
+      "requiresProof": false,
+      "proofPrompt": ""
+    },
+    {
+      "key": "lo",
+      "displayName": "Logistics & Operations",
+      "description": "Logistics & Operations manages ANRO's structural organization. This department maintains the ORBAT, tracks departmental staffing, and ensures that administrative records remain accurate and orderly.",
+      "requirements": "Strong organizational skills, attention to detail and comfort working with structured documentation such as spreadsheets and tracking systems.",
+      "whatYouDo": "You maintain the ORBAT and track all hired departmental members. Members update records, organize structural documentation, and ensure that ANRO's internal systems remain clean, accurate, and professional.",
+      "bannerUrl": "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhfzg0-gQD0Ufw6AXtXPPlXPy_VlPxUnvOEfK-D6V9ehqBO3X9JquDtttV7Q4Q2d11kGsDtoTVqr9p5QY8LPFOo1pxDAMgZW1DjWEsNerS1qnfnBn6kJfTLCRyfV2Md4UYwS51pLAlPo-gv-W6y-Xrd9YpHK82dD6T6EAWx7z8WT6_uxOQAN14opYqR2_G_/s320/lo-banner.png",
+      "hubMessageName": "Logistics & Operations",
+      "hubMessageAvatarUrl": "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhyMHUQ77becZyiptU75l7ye-Sq9BHriTFurCs120BQ9brJXmMfvkQSxgM236LOEnkTadFnwxH3KbVKcwme6MEgajOa20JicLPGWjTgc0Z9x-5vkNO_yfIsCQplaus6dma_FX6GQhzD2zDDBO1NQzRQME-775-JsX59A5OsgSfm1w6OCQ67LWj3yGLQ6Xg6/s320/8c32b6c7-0403-4821-b9e3-771688bca242.png",
+      "grantRoleIds": [
+        1421538343304429772
+      ],
+      "reviewerRoleIds": [
+        1464983368965030094
+      ],
+      "autoAcceptGroupId": 904760,
+      "seedOrbatOnApprove": true,
+      "eligibility": {
+        "requiredRoleIds": [],
+        "denyMessage": ""
+      },
+      "questions": [
+        {
+          "key": "loshort1",
+          "label": "Why do you want to join Logistics & Operations?",
+          "required": true,
+          "style": "short",
+          "maxLength": 400,
+          "placeholder": "Why do you want to join Logistics & Operations?"
+        },
+        {
+          "key": "lomultiplechoice1",
+          "label": "Have you ever used programs like Google Documents and/or Google Sheets?",
+          "required": true,
+          "style": "multiple-choice",
+          "choices": [
+            "Yes",
+            "No"
+          ]
+        }
+      ],
+      "requiresProof": false,
+      "proofPrompt": ""
+    },
+    {
+      "key": "niru",
+      "displayName": "Noobic Innovation and Research Unit",
+      "description": "Noobic Innovation and Research Unit studies game mechanics and builds server-side systems that support ANRO operations. This department bridges technical analysis and internal tool creation.",
+      "requirements": "Analytical thinking, curiosity about game systems, and experience with scripting or bot development is preferred.",
+      "whatYouDo": "You research major game updates to determine how systems function and document your findings for other departments. You also develop internal tools such as bots and scripts to improve efficiency across ANRO.",
+      "bannerUrl": "",
+      "hubMessageName": "Noobic Innovation and Research Unit",
+      "hubMessageAvatarUrl": "https://media.discordapp.net/attachments/1482505958805737626/1482507649709773042/NIRU-X.png?ex=69b73457&is=69b5e2d7&hm=9bb16d88f4213cf34ebf79f3e00c8432eb8a0639a0bebeac6243da36b5518dc8&=&format=webp&quality=lossless",
+      "grantRoleIds": [
+        1380896048385359953
+      ],
+      "reviewerRoleIds": [],
+      "autoAcceptGroupId": 0,
+      "seedOrbatOnApprove": true,
+      "eligibility": {
+        "requiredRoleIds": [],
+        "denyMessage": ""
+      },
+      "questions": [
+        {
+          "key": "nirumultiplechoice1",
+          "label": "Please select the portion of NIRU that interests you",
+          "required": true,
+          "style": "multiple-choice",
+          "choices": [
+            "Research",
+            "Programming",
+            "Both"
+          ]
+        },
+        {
+          "key": "nirushort2",
+          "label": "How long have you been a member of ANRO?",
+          "required": true,
+          "style": "short",
+          "maxLength": 400,
+          "placeholder": ""
+        },
+        {
+          "key": "nirushort1",
+          "label": "Why would you do good in your selected option?",
+          "required": true,
+          "style": "short",
+          "maxLength": 400,
+          "placeholder": ""
+        }
+      ],
+      "requiresProof": false,
+      "proofPrompt": ""
+    },
+    {
+      "key": "propaganda",
+      "displayName": "Propaganda",
+      "description": "Propaganda serves as ANRO's creative and visual design department. This team produces artwork, branding elements, and promotional materials that define ANRO's public image.",
+      "requirements": "Artistic skill in digital illustration, graphic design, 3D modeling, or related creative fields. Consistency with branding and attention to detail are important.",
+      "whatYouDo": "You create visual assets for ANRO. Members design logos, insignias, posters, renders, and other creative works that strengthen the group's identity and presentation.",
+      "bannerUrl": "",
+      "hubMessageName": "Propaganda",
+      "hubMessageAvatarUrl": "https://media.discordapp.net/attachments/1473038231531687968/1473038430140108920/noFilter.png?ex=699b58f1&is=699a0771&hm=ec02bc878c50f451ff1988c057cab13ac241e9823dd3365e55ef2b8a9d74703e&=&format=webp&quality=lossless",
+      "grantRoleIds": [],
+      "reviewerRoleIds": [],
+      "autoAcceptGroupId": 0,
+      "seedOrbatOnApprove": true,
+      "eligibility": {
+        "requiredRoleIds": [],
+        "denyMessage": ""
+      },
+      "questions": [],
+      "requiresProof": false,
+      "proofPrompt": ""
+    },
+    {
+      "key": "aa",
+      "displayName": "Audit & Assurance",
+      "description": "Auditing & Assurance evaluates departmental performance across ANRO. This department identifies inefficiencies, structural issues, and operational weaknesses without directly intervening.",
+      "requirements": "Strong analytical thinking, professionalism, discretion, and the ability to provide constructive feedback without bias.",
+      "whatYouDo": "You review other departments, identify pressure points, and report findings to department heads. If necessary, you escalate concerns to senior leadership. You do not enforce changes, you ensure accountability through transparency.",
+      "bannerUrl": "",
+      "hubMessageName": "Auditing & Assurance",
+      "hubMessageAvatarUrl": "https://media.discordapp.net/attachments/1467542909812347074/1478555326016917726/0.png?ex=69a8d373&is=69a781f3&hm=012ae8d8e93e2c392b0e4197fdee7a86cf5429f58c69ac453e32cb6d1ff43b78&=&format=webp&quality=lossless",
+      "grantRoleIds": [],
+      "reviewerRoleIds": [
+        1383498463609884834
+      ],
+      "autoAcceptGroupId": 0,
+      "seedOrbatOnApprove": true,
+      "eligibility": {
+        "requiredRoleIds": [],
+        "denyMessage": ""
+      },
+      "questions": [],
+      "requiresProof": false,
+      "proofPrompt": ""
+    },
+    {
+      "key": "msb",
+      "displayName": "Moderation Services Bureau",
+      "description": "MSB maintains a safe and child-friendly environment within ANRO. This department enforces rules, resolves conflicts, and ensures that community standards are upheld.",
+      "requirements": "Maturity, fairness, strong judgment, and the ability to remain calm during disputes. Moderation experience is preferred.",
+      "whatYouDo": "You moderate Discord channels, enforce community guidelines, handle reports, and ensure that ANRO remains a safe and respectful environment for all members.",
+      "bannerUrl": "",
+      "hubMessageName": "Moderation Services Bureau",
+      "grantRoleIds": [],
+      "reviewerRoleIds": [],
+      "autoAcceptGroupId": 0,
+      "seedOrbatOnApprove": true,
+      "eligibility": {
+        "requiredRoleIds": [],
+        "denyMessage": ""
+      },
+      "questions": [],
+      "requiresProof": false,
+      "proofPrompt": ""
+    },
+    {
+      "key": "ce",
+      "displayName": "Community Engagement",
+      "description": "Community Engagement strengthens ANRO's social environment through events and cross-community interaction. This department focuses on keeping the community active and connected.",
+      "requirements": "Creativity, reliability, and strong event-hosting skills. Members should be comfortable coordinating with other groups and managing event logistics.",
+      "whatYouDo": "You host large-scale events, coordinate collaborations with other factions, and manage community spaces such as the ANRO Minecraft server. Your goal is to keep members engaged and involved.",
+      "bannerUrl": "",
+      "hubMessageName": "Community Engagement",
+      "hubMessageAvatarUrl": "https://media.discordapp.net/attachments/1474467341122408680/1474476731057574040/CE2.png?ex=699b4e77&is=6999fcf7&hm=f210ad1b65b2bea62a638a270fcbf692dbb8f1644284b623921c98ac87d1ecb8&=&format=webp&quality=lossless",
+      "grantRoleIds": [],
+      "reviewerRoleIds": [],
+      "autoAcceptGroupId": 0,
+      "seedOrbatOnApprove": true,
+      "eligibility": {
+        "requiredRoleIds": [],
+        "denyMessage": ""
+      },
+      "questions": [],
+      "requiresProof": false,
+      "proofPrompt": ""
+    },
+    {
+      "key": "mrm",
+      "displayName": "Middle Rank Management",
+      "description": "Middle Rank Management oversees ANRO's Middle Ranks. This department ensures that mid-level members are supported, supervised, and held accountable.",
+      "requirements": "Leadership ability, conflict resolution skills, and familiarity with the responsibilities of Middle Rank members.",
+      "whatYouDo": "You supervise Middle Ranks, address performance concerns, provide guidance, and act as an intermediary between leadership and general staff.",
+      "bannerUrl": "",
+      "hubMessageName": "Middle Rank Management",
+      "hubMessageAvatarUrl": "https://media.discordapp.net/attachments/1474467341122408680/1474476730231296233/MRM-V.png?ex=699b4e76&is=6999fcf6&hm=a9ecc770495581b592f113053a96ea773d73d75738c4dceb539647c9ac5f165e&=&format=webp&quality=lossless",
+      "grantRoleIds": [],
+      "reviewerRoleIds": [],
+      "autoAcceptGroupId": 0,
+      "seedOrbatOnApprove": true,
+      "eligibility": {
+        "requiredRoleIds": [],
+        "denyMessage": ""
+      },
+      "questions": [],
+      "requiresProof": false,
+      "proofPrompt": ""
+    }
+  ]
+}
