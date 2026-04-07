@@ -45,6 +45,7 @@ async def safeInteractionReply(
     content: Optional[str] = None,
     embed: Optional[discord.Embed] = None,
     embeds: Optional[list[discord.Embed]] = None,
+    file: Optional[discord.File] = None,
     view: Any = _MISSING,
     ephemeral: bool = True,
     allowedMentions: Any = _MISSING,
@@ -56,6 +57,8 @@ async def safeInteractionReply(
         kwargs["embed"] = embed
     if embeds is not None:
         kwargs["embeds"] = embeds
+    if file is not None:
+        kwargs["file"] = file
     if view is not _MISSING and isinstance(view, discord.ui.View):
         kwargs["view"] = view
     if allowedMentions is not _MISSING:

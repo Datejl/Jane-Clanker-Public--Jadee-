@@ -14,7 +14,74 @@ from silly import hallService
 log = logging.getLogger(__name__)
 
 _starEmoji = "\N{WHITE MEDIUM STAR}"
+_fireEmoji = "\N{FIRE}"
 _skullEmoji = "\N{SKULL}"
+_cockroachEmoji = "\N{COCKROACH}"
+_sobEmoji = "\N{LOUDLY CRYING FACE}"
+_wiltedRoseEmoji = "\N{WILTED FLOWER}"
+
+_hallEmojiRoutes = {
+    _starEmoji: (
+        "FAME",
+        "hallOfFameChannelId",
+        _starEmoji,
+        "Hall of Fame",
+    ),
+    _fireEmoji: (
+        "FAME",
+        "hallOfFameChannelId",
+        _fireEmoji,
+        "Hall of Fame",
+    ),
+    _skullEmoji: (
+        "SHAME",
+        "hallOfShameChannelId",
+        _skullEmoji,
+        "Hall of Shame",
+    ),
+    _cockroachEmoji: (
+        "SHAME",
+        "hallOfShameChannelId",
+        _cockroachEmoji,
+        "Hall of Shame",
+    ),
+    _sobEmoji: (
+        "SHAME",
+        "hallOfShameChannelId",
+        _sobEmoji,
+        "Hall of Shame",
+    ),
+    _wiltedRoseEmoji: (
+        "SHAME",
+        "hallOfShameChannelId",
+        _wiltedRoseEmoji,
+        "Hall of Shame",
+    ),
+}
+
+_hallEmojiNameRoutes = {
+    "star": _starEmoji,
+    "fire": _fireEmoji,
+    "skull": _skullEmoji,
+    "cockroach": _cockroachEmoji,
+    "sob": _sobEmoji,
+    "loudly_crying_face": _sobEmoji,
+    "wilted_rose": _wiltedRoseEmoji,
+    "wilted_flower": _wiltedRoseEmoji,
+}
+
+_hallEmojiIdRoutes = {
+    1381056801969275061: (
+        "FAME",
+        "hallOfFameChannelId",
+        "Hall of Fame",
+    ),
+    1429185489637871708: (
+        "SHAME",
+        "hallOfShameChannelId",
+        "Hall of Shame",
+    ),
+}
 
 
 def _reactionThreshold() -> int:
@@ -53,39 +120,47 @@ def _categoryIdForSourceChannel(channel: object) -> int:
     return 0
 
 
-def _toHallRoute(emoji: discord.PartialEmoji) -> Optional[tuple[str, int, str, str]]:
-    emojiName = str(emoji.name or "").strip()
+def _toHallRoute(emoji: object) -> Optional[tuple[str, int, str, str]]:
+    if isinstance(emoji, str):
+        emojiName = str(emoji or "").strip()
+        emojiId = None
+        emojiDisplay = emojiName
+    else:
+        emojiName = str(getattr(emoji, "name", "") or "").strip()
+        emojiId = getattr(emoji, "id", None)
+        emojiDisplay = str(emoji)
     emojiNameLower = emojiName.lower()
 
-    if emoji.id is None:
-        if emojiName == _starEmoji:
+    if emojiId is not None:
+        route = _hallEmojiIdRoutes.get(int(emojiId))
+        if route is not None:
+            hallType, channelAttr, hallTitle = route
             return (
-                "FAME",
-                int(getattr(config, "hallOfFameChannelId", 0) or 0),
-                _starEmoji,
-                "Hall of Fame",
-            )
-        if emojiName == _skullEmoji:
-            return (
-                "SHAME",
-                int(getattr(config, "hallOfShameChannelId", 0) or 0),
-                _skullEmoji,
-                "Hall of Shame",
+                hallType,
+                int(getattr(config, channelAttr, 0) or 0),
+                emojiDisplay,
+                hallTitle,
             )
 
-    if emojiNameLower == "star":
+    if emojiId is None:
+        route = _hallEmojiRoutes.get(emojiName)
+        if route is not None:
+            hallType, channelAttr, reactionEmoji, hallTitle = route
+            return (
+                hallType,
+                int(getattr(config, channelAttr, 0) or 0),
+                reactionEmoji,
+                hallTitle,
+            )
+
+    mappedEmoji = _hallEmojiNameRoutes.get(emojiNameLower)
+    if mappedEmoji is not None:
+        hallType, channelAttr, reactionEmoji, hallTitle = _hallEmojiRoutes[mappedEmoji]
         return (
-            "FAME",
-            int(getattr(config, "hallOfFameChannelId", 0) or 0),
-            _starEmoji,
-            "Hall of Fame",
-        )
-    if emojiNameLower == "skull":
-        return (
-            "SHAME",
-            int(getattr(config, "hallOfShameChannelId", 0) or 0),
-            _skullEmoji,
-            "Hall of Shame",
+            hallType,
+            int(getattr(config, channelAttr, 0) or 0),
+            reactionEmoji,
+            hallTitle,
         )
     return None
 
@@ -118,27 +193,76 @@ def _safeDisplayName(author: discord.abc.User) -> str:
     return f"user-{int(author.id)}"
 
 
-def _reactionCount(message: discord.Message, emoji: discord.PartialEmoji) -> int:
-    targetKey = str(emoji)
+def _reactionBreakdown(message: discord.Message, hallType: str) -> dict[str, int]:
+    normalizedHallType = str(hallType or "").upper()
+    breakdown: dict[str, int] = {}
     for reaction in message.reactions:
-        if str(reaction.emoji) == targetKey:
-            try:
-                return int(reaction.count or 0)
-            except (TypeError, ValueError):
-                return 0
-    return 0
+        route = _toHallRoute(reaction.emoji)
+        if route is None:
+            continue
+        reactionHallType, _, reactionEmoji, _ = route
+        if reactionHallType != normalizedHallType:
+            continue
+        try:
+            reactionCount = int(reaction.count or 0)
+        except (TypeError, ValueError):
+            reactionCount = 0
+        breakdown[reactionEmoji] = max(0, reactionCount)
+    return breakdown
+
+
+def _primaryHallReaction(
+    reactionBreakdown: dict[str, int],
+    *,
+    fallbackEmoji: str,
+) -> tuple[str, int]:
+    if not reactionBreakdown:
+        return (str(fallbackEmoji or "").strip() or _starEmoji, 0)
+
+    primaryEmoji = str(fallbackEmoji or "").strip()
+    primaryCount = -1
+    for reactionEmoji, reactionCount in reactionBreakdown.items():
+        if reactionCount > primaryCount:
+            primaryEmoji = reactionEmoji
+            primaryCount = int(reactionCount)
+    if not primaryEmoji:
+        firstEmoji, firstCount = next(iter(reactionBreakdown.items()))
+        return (firstEmoji, int(firstCount))
+    return (primaryEmoji, max(0, primaryCount))
+
+
+def _meetsHallThreshold(reactionBreakdown: dict[str, int]) -> bool:
+    threshold = _reactionThreshold()
+    return any(int(reactionCount) >= threshold for reactionCount in reactionBreakdown.values())
+
+
+def _orderedHallBreakdownItems(reactionBreakdown: dict[str, int]) -> list[tuple[str, int]]:
+    return sorted(
+        ((reactionEmoji, max(0, int(reactionCount))) for reactionEmoji, reactionCount in reactionBreakdown.items()),
+        key=lambda item: -int(item[1]),
+    )
 
 
 def _hallHeaderLine(
     *,
-    reactionEmoji: str,
-    reactionCount: int,
+    reactionBreakdown: dict[str, int],
     sourceChannelId: int,
+    fallbackEmoji: str,
 ) -> str:
-    safeCount = max(0, int(reactionCount or 0))
+    orderedItems = [
+        (reactionEmoji, reactionCount)
+        for reactionEmoji, reactionCount in _orderedHallBreakdownItems(reactionBreakdown)
+        if int(reactionCount or 0) > 0
+    ]
+    if not orderedItems:
+        orderedItems = [(_primaryHallReaction(reactionBreakdown, fallbackEmoji=fallbackEmoji))]
+    reactionSummary = " | ".join(
+        f"{reactionEmoji} **{max(0, int(reactionCount or 0))}**"
+        for reactionEmoji, reactionCount in orderedItems
+    )
     if int(sourceChannelId or 0) > 0:
-        return f"{reactionEmoji} **{safeCount}** | <#{int(sourceChannelId)}>"
-    return f"{reactionEmoji} **{safeCount}** | #unknown"
+        return f"{reactionSummary} | <#{int(sourceChannelId)}>"
+    return f"{reactionSummary} | #unknown"
 
 
 def _buildHallEmbed(
@@ -166,6 +290,7 @@ def _buildHallEmbed(
         timestamp=sourceMessage.created_at,
     )
     embed.set_author(name=authorName, icon_url=authorIconUrl)
+    embed.set_footer(text=f"Source message ID: {int(sourceMessage.id)}")
 
     imageUrl = _firstImageUrl(sourceMessage)
     if imageUrl:
@@ -199,14 +324,14 @@ class HallCog(commands.Cog):
         hallTitle: str,
         targetChannel: object,
         sourceChannelId: int,
-        reactionEmoji: str,
-        reactionCount: int,
+        reactionBreakdown: dict[str, int],
+        fallbackEmoji: str,
         embed: discord.Embed,
     ) -> Optional[int]:
         headerLine = _hallHeaderLine(
-            reactionEmoji=reactionEmoji,
-            reactionCount=reactionCount,
+            reactionBreakdown=reactionBreakdown,
             sourceChannelId=sourceChannelId,
+            fallbackEmoji=fallbackEmoji,
         )
 
         useWebhook = bool(getattr(config, "hallUseWebhook", True))
@@ -269,14 +394,98 @@ class HallCog(commands.Cog):
             None,
         )
 
+    async def _findExistingHallPostMessage(
+        self,
+        targetChannel: object,
+        *,
+        sourceMessage: discord.Message,
+    ) -> Optional[discord.Message]:
+        if not isinstance(targetChannel, (discord.TextChannel, discord.Thread)):
+            return None
+
+        sourceJumpUrl = str(sourceMessage.jump_url or "").strip()
+        if not sourceJumpUrl:
+            return None
+
+        try:
+            async for candidate in targetChannel.history(limit=2000):
+                for embed in candidate.embeds:
+                    embedDescription = str(embed.description or "")
+                    if sourceJumpUrl and sourceJumpUrl in embedDescription:
+                        return candidate
+                    footerText = str(embed.footer.text or "").strip()
+                    if footerText == f"Source message ID: {int(sourceMessage.id)}":
+                        return candidate
+        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+            return None
+        return None
+
+    async def _recoverExistingHallPost(
+        self,
+        *,
+        guild: discord.Guild,
+        hallType: str,
+        targetChannel: object,
+        sourceMessage: discord.Message,
+        sourceChannelId: int,
+        reactionBreakdown: dict[str, int],
+        fallbackEmoji: str,
+    ) -> Optional[dict]:
+        recoveredMessage = await self._findExistingHallPostMessage(
+            targetChannel,
+            sourceMessage=sourceMessage,
+        )
+        if recoveredMessage is None:
+            return None
+
+        primaryReactionEmoji, primaryReactionCount = _primaryHallReaction(
+            reactionBreakdown,
+            fallbackEmoji=fallbackEmoji,
+        )
+        recoveredRecord = {
+            "messageId": int(sourceMessage.id),
+            "hallType": hallType,
+            "guildId": int(guild.id),
+            "sourceChannelId": int(sourceChannelId),
+            "targetChannelId": int(getattr(targetChannel, "id", 0)),
+            "sourceAuthorId": int(sourceMessage.author.id),
+            "reactionEmoji": primaryReactionEmoji,
+            "reactionCount": int(primaryReactionCount),
+            "postedMessageId": int(recoveredMessage.id),
+        }
+        updated = await self._updateExistingHallPostCount(
+            guild=guild,
+            existing=recoveredRecord,
+            hallType=hallType,
+            reactionBreakdown=reactionBreakdown,
+            fallbackEmoji=fallbackEmoji,
+            sourceChannelId=sourceChannelId,
+        )
+        if not updated:
+            return None
+
+        await hallService.createHallPost(
+            messageId=int(sourceMessage.id),
+            hallType=hallType,
+            guildId=int(guild.id),
+            sourceChannelId=int(sourceChannelId),
+            targetChannelId=int(getattr(targetChannel, "id", 0)),
+            sourceAuthorId=int(sourceMessage.author.id),
+            reactionEmoji=primaryReactionEmoji,
+            reactionCount=int(primaryReactionCount),
+            reactionBreakdown=reactionBreakdown,
+            postedMessageId=int(recoveredMessage.id),
+        )
+        return recoveredRecord
+
     async def _updateExistingHallPostCount(
         self,
         *,
         guild: discord.Guild,
         existing: dict,
         hallType: str,
-        reactionEmoji: str,
-        reactionCount: int,
+        reactionBreakdown: dict[str, int],
+        fallbackEmoji: str,
         sourceChannelId: int,
     ) -> bool:
         targetChannelId = int(existing.get("targetChannelId") or 0)
@@ -296,9 +505,9 @@ class HallCog(commands.Cog):
             return True
 
         headerLine = _hallHeaderLine(
-            reactionEmoji=reactionEmoji,
-            reactionCount=reactionCount,
+            reactionBreakdown=reactionBreakdown,
             sourceChannelId=sourceChannelId,
+            fallbackEmoji=fallbackEmoji,
         )
         try:
             await postedMessage.edit(content=headerLine)
@@ -364,29 +573,103 @@ class HallCog(commands.Cog):
         if bool(getattr(config, "hallIgnoreBotMessages", True)) and sourceMessage.author.bot:
             return
 
-        count = _reactionCount(sourceMessage, payload.emoji)
+        reactionBreakdown = _reactionBreakdown(sourceMessage, hallType)
+        primaryReactionEmoji, primaryReactionCount = _primaryHallReaction(
+            reactionBreakdown,
+            fallbackEmoji=reactionEmoji,
+        )
 
         lockKey = (int(sourceMessage.id), hallType)
         dispatchLock = self._dispatchLocks.setdefault(lockKey, asyncio.Lock())
-        try:
-            async with dispatchLock:
-                existing = await hallService.getHallPost(int(sourceMessage.id), hallType)
-                if existing is None:
-                    if not allowCreate or count < _reactionThreshold():
+        async with dispatchLock:
+            existing = await hallService.getHallPost(int(sourceMessage.id), hallType)
+            if existing is None:
+                if not allowCreate or not _meetsHallThreshold(reactionBreakdown):
+                    return
+                targetChannel = await self._resolveGuildChannel(guild, int(targetChannelId))
+                if targetChannel is None:
+                    return
+                if int(getattr(targetChannel, "id", 0)) == int(getattr(sourceChannel, "id", 0)):
+                    return
+
+                recovered = await self._recoverExistingHallPost(
+                    guild=guild,
+                    hallType=hallType,
+                    targetChannel=targetChannel,
+                    sourceMessage=sourceMessage,
+                    sourceChannelId=int(getattr(sourceChannel, "id", 0)),
+                    reactionBreakdown=reactionBreakdown,
+                    fallbackEmoji=reactionEmoji,
+                )
+                if recovered is not None:
+                    return
+
+                embed = _buildHallEmbed(hallType=hallType, sourceMessage=sourceMessage)
+                postedMessageId = await self._sendHallPost(
+                    hallTitle=hallTitle,
+                    targetChannel=targetChannel,
+                    sourceChannelId=int(getattr(sourceChannel, "id", 0)),
+                    reactionBreakdown=reactionBreakdown,
+                    fallbackEmoji=reactionEmoji,
+                    embed=embed,
+                )
+                if not postedMessageId:
+                    return
+                await hallService.createHallPost(
+                    messageId=int(sourceMessage.id),
+                    hallType=hallType,
+                    guildId=int(guild.id),
+                    sourceChannelId=int(getattr(sourceChannel, "id", 0)),
+                    targetChannelId=int(getattr(targetChannel, "id", 0)),
+                    sourceAuthorId=int(sourceMessage.author.id),
+                    reactionEmoji=primaryReactionEmoji,
+                    reactionCount=int(primaryReactionCount),
+                    reactionBreakdown=reactionBreakdown,
+                    postedMessageId=int(postedMessageId),
+                )
+                return
+
+            previousBreakdown = hallService.loadReactionBreakdown(existing)
+            if previousBreakdown == reactionBreakdown:
+                return
+
+            updated = await self._updateExistingHallPostCount(
+                guild=guild,
+                existing=existing,
+                hallType=hallType,
+                reactionBreakdown=reactionBreakdown,
+                fallbackEmoji=str(existing.get("reactionEmoji") or reactionEmoji),
+                sourceChannelId=int(getattr(sourceChannel, "id", 0)),
+            )
+            if not updated:
+                targetChannel = await self._resolveGuildChannel(guild, int(targetChannelId))
+                if targetChannel is not None and int(getattr(targetChannel, "id", 0)) != int(getattr(sourceChannel, "id", 0)):
+                    recovered = await self._recoverExistingHallPost(
+                        guild=guild,
+                        hallType=hallType,
+                        targetChannel=targetChannel,
+                        sourceChannelId=int(getattr(sourceChannel, "id", 0)),
+                        sourceMessage=sourceMessage,
+                        reactionBreakdown=reactionBreakdown,
+                        fallbackEmoji=str(existing.get("reactionEmoji") or reactionEmoji),
+                    )
+                    if recovered is not None:
                         return
+
+                await hallService.deleteHallPost(int(sourceMessage.id), hallType)
+                if allowCreate and _meetsHallThreshold(reactionBreakdown):
                     targetChannel = await self._resolveGuildChannel(guild, int(targetChannelId))
                     if targetChannel is None:
                         return
                     if int(getattr(targetChannel, "id", 0)) == int(getattr(sourceChannel, "id", 0)):
                         return
-
                     embed = _buildHallEmbed(hallType=hallType, sourceMessage=sourceMessage)
                     postedMessageId = await self._sendHallPost(
                         hallTitle=hallTitle,
                         targetChannel=targetChannel,
                         sourceChannelId=int(getattr(sourceChannel, "id", 0)),
-                        reactionEmoji=reactionEmoji,
-                        reactionCount=count,
+                        reactionBreakdown=reactionBreakdown,
+                        fallbackEmoji=str(existing.get("reactionEmoji") or reactionEmoji),
                         embed=embed,
                     )
                     if not postedMessageId:
@@ -398,66 +681,20 @@ class HallCog(commands.Cog):
                         sourceChannelId=int(getattr(sourceChannel, "id", 0)),
                         targetChannelId=int(getattr(targetChannel, "id", 0)),
                         sourceAuthorId=int(sourceMessage.author.id),
-                        reactionEmoji=reactionEmoji,
-                        reactionCount=int(count),
+                        reactionEmoji=primaryReactionEmoji,
+                        reactionCount=int(primaryReactionCount),
+                        reactionBreakdown=reactionBreakdown,
                         postedMessageId=int(postedMessageId),
                     )
                     return
 
-                try:
-                    previousCount = int(existing.get("reactionCount") or 0)
-                except (TypeError, ValueError):
-                    previousCount = -1
-                if previousCount == int(count):
-                    return
-
-                updated = await self._updateExistingHallPostCount(
-                    guild=guild,
-                    existing=existing,
-                    hallType=hallType,
-                    reactionEmoji=reactionEmoji,
-                    reactionCount=int(count),
-                    sourceChannelId=int(getattr(sourceChannel, "id", 0)),
-                )
-                if not updated:
-                    await hallService.deleteHallPost(int(sourceMessage.id), hallType)
-                    if allowCreate and count >= _reactionThreshold():
-                        targetChannel = await self._resolveGuildChannel(guild, int(targetChannelId))
-                        if targetChannel is None:
-                            return
-                        if int(getattr(targetChannel, "id", 0)) == int(getattr(sourceChannel, "id", 0)):
-                            return
-                        embed = _buildHallEmbed(hallType=hallType, sourceMessage=sourceMessage)
-                        postedMessageId = await self._sendHallPost(
-                            hallTitle=hallTitle,
-                            targetChannel=targetChannel,
-                            sourceChannelId=int(getattr(sourceChannel, "id", 0)),
-                            reactionEmoji=reactionEmoji,
-                            reactionCount=count,
-                            embed=embed,
-                        )
-                        if not postedMessageId:
-                            return
-                        await hallService.createHallPost(
-                            messageId=int(sourceMessage.id),
-                            hallType=hallType,
-                            guildId=int(guild.id),
-                            sourceChannelId=int(getattr(sourceChannel, "id", 0)),
-                            targetChannelId=int(getattr(targetChannel, "id", 0)),
-                            sourceAuthorId=int(sourceMessage.author.id),
-                            reactionEmoji=reactionEmoji,
-                            reactionCount=int(count),
-                            postedMessageId=int(postedMessageId),
-                        )
-                    return
-
-                await hallService.updateHallPostCount(
-                    messageId=int(sourceMessage.id),
-                    hallType=hallType,
-                    reactionCount=int(count),
-                )
-        finally:
-            self._dispatchLocks.pop(lockKey, None)
+            await hallService.updateHallPostReactionState(
+                messageId=int(sourceMessage.id),
+                hallType=hallType,
+                reactionEmoji=primaryReactionEmoji,
+                reactionCount=int(primaryReactionCount),
+                reactionBreakdown=reactionBreakdown,
+            )
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:

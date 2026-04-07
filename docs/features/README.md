@@ -2,6 +2,11 @@
 
 This is not deep documentation yet. It is just a map of the big systems so the repo is easier to navigate.
 
+If you want more specific "what does this actual file do?" docs, check:
+
+- [New Dev Tasks](../newDevTasks.md)
+- [File Notes](../fileNotes/README.md)
+
 ## Community
 
 - polls

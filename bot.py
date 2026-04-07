@@ -1,12 +1,14 @@
 ﻿import asyncio
 import logging
 import os
+from pathlib import Path
 import sys
 import threading
 import time
 from datetime import datetime, timedelta, timezone
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
+import codecs
 
 import discord
 from discord import app_commands
@@ -43,6 +45,7 @@ from runtime import (
     privateServices as runtimePrivateServices,
     pluginRegistry as runtimePluginRegistry,
     retryQueue as runtimeRetryQueue,
+    singleInstance as runtimeSingleInstance,
     taskBudgeter,
     textCommands as runtimeTextCommands,
     webhookHealth as runtimeWebhookHealth,
@@ -103,6 +106,9 @@ _eventDispatcher = runtimeEventIngest.EventIngestDispatcher(
 _featureFlags = runtimeFeatureFlags.FeatureFlagService(configModule=config)
 _pluginRegistry = runtimePluginRegistry.PluginRegistry()
 _pauseController = runtimePauseState.PauseController()
+_singleInstanceLock = runtimeSingleInstance.SingleInstanceLock(
+    Path(__file__).resolve().parent / "logs" / "jane-runtime.lock"
+)
 _retryQueue = runtimeRetryQueue.RetryQueueCoordinator(
     taskBudgeter=taskBudgeter,
     pollIntervalSec=int(getattr(config, "retryQueuePollIntervalSec", 6) or 6),
@@ -485,6 +491,23 @@ async def _postTerminalWebhookMessage(
     )
 
 
+async def _postCopyServerWebhookMessage(
+    message: discord.Message,
+    content: str,
+    view: discord.ui.View,
+) -> bool:
+    return await runtimeWebhooks.sendOwnedWebhookMessage(
+        botClient=botClient,
+        channel=message.channel,
+        webhookName="Jane Copyserver",
+        content=content,
+        view=view,
+        username="Jane Copyserver",
+        avatarUrl=botClient.user.display_avatar.url if botClient.user else None,
+        reason="Hidden copyserver confirmation",
+    )
+
+
 def _hasCohostPermission(member: discord.Member) -> bool:
     return runtimePermissions.hasCohostPermission(member)
 
@@ -499,6 +522,78 @@ def _isGuildAllowedForCommands(guildId: int | None) -> bool:
     if not _allowedCommandGuildIds:
         return True
     return guildId in _allowedCommandGuildIds
+
+
+def _persistAllowedCommandGuildId(guildId: int) -> bool:
+    configPath = Path(__file__).resolve().with_name("config.py")
+    source = configPath.read_text(encoding="utf-8")
+    newline = "\r\n" if "\r\n" in source else "\n"
+    lines = source.splitlines()
+
+    startIndex = -1
+    endIndex = -1
+    for index, line in enumerate(lines):
+        if line.strip() == "allowedCommandGuildIds = [":
+            startIndex = index
+            continue
+        if startIndex >= 0 and line.strip() == "]":
+            endIndex = index
+            break
+
+    if startIndex < 0 or endIndex <= startIndex:
+        raise RuntimeError("allowedCommandGuildIds block not found in config.py")
+
+    for line in lines[startIndex + 1 : endIndex]:
+        raw = str(line or "").strip().rstrip(",")
+        try:
+            parsed = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if parsed == int(guildId):
+            return False
+
+    lines.insert(endIndex, f"    {int(guildId)},")
+    trailingNewline = newline if source.endswith(("\n", "\r\n")) else ""
+    configPath.write_text(newline.join(lines) + trailingNewline, encoding="utf-8")
+    return True
+
+
+def _allowGuildForCommands(guildId: int | None) -> str:
+    if guildId is None:
+        return "invalid"
+    try:
+        guildIdInt = int(guildId)
+    except (TypeError, ValueError):
+        return "invalid"
+    if guildIdInt <= 0:
+        return "invalid"
+
+    configuredGuildIds: list[int] = []
+    for raw in (getattr(config, "allowedCommandGuildIds", []) or []):
+        try:
+            parsed = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            configuredGuildIds.append(parsed)
+    alreadyAllowed = guildIdInt in _allowedCommandGuildIds and guildIdInt in configuredGuildIds
+
+    if guildIdInt not in _allowedCommandGuildIds:
+        _allowedCommandGuildIds.add(guildIdInt)
+    if guildIdInt not in configuredGuildIds:
+        configuredGuildIds.append(guildIdInt)
+        setattr(config, "allowedCommandGuildIds", configuredGuildIds)
+
+    if alreadyAllowed:
+        return "already"
+
+    try:
+        wroteConfig = _persistAllowedCommandGuildId(guildIdInt)
+    except Exception:
+        logging.exception("Failed to persist allowed command guild %s into config.py.", guildIdInt)
+        return "runtime-only"
+
+    return "added" if wroteConfig else "already"
 
 
 def _getTextCommandRouter() -> runtimeTextCommands.TextCommandRouter:
@@ -519,8 +614,12 @@ def _getTextCommandRouter() -> runtimeTextCommands.TextCommandRouter:
             getProcessResourceSnapshot=_getProcessResourceSnapshot,
             sendRuntimeWebhookMessage=_postRuntimeWebhookMessage,
             sendTerminalWebhookMessage=_postTerminalWebhookMessage,
+            sendCopyServerWebhookMessage=_postCopyServerWebhookMessage,
             hasCohostPermission=_hasCohostPermission,
+            isGuildAllowedForCommands=_isGuildAllowedForCommands,
+            allowGuildForCommands=_allowGuildForCommands,
             orbatWeeklyScheduleConfig=_orbatWeeklyScheduleConfig,
+            serverSafetyService=_privateServices.serverSafetyService,
             gitUpdateCoordinator=_gitUpdateCoordinator,
             generalErrorLogPath=str(getattr(botClient, "runtimeServices", {}).get("generalErrorLogPath", "") or ""),
         )
@@ -537,6 +636,14 @@ async def _handleJaneRuntime(message: discord.Message) -> bool:
 
 async def _handleJaneTerminal(message: discord.Message) -> bool:
     return await _getTextCommandRouter().handleJaneTerminal(message)
+
+
+async def _handleShutdownCommand(message: discord.Message) -> bool:
+    return await _getTextCommandRouter().handleShutdown(message)
+
+
+async def _handleCopyServerCommand(message: discord.Message) -> bool:
+    return await _getTextCommandRouter().handleCopyServer(message)
 
 
 async def _handleBgCheckCommand(message: discord.Message) -> bool:
@@ -820,9 +927,17 @@ async def _processCommands(message: discord.Message) -> None:
 
 @botClient.event
 async def on_message(message: discord.Message) -> None:
+    if not message.author.bot:
+        _getTextCommandRouter().noteCopyServerWarningMessage(message)
     if _pauseController.isPaused():
         if not message.author.bot:
             token = _firstLowerToken(message.content or "")
+            if token == "!copyserver":
+                if await _handleCopyServerCommand(message):
+                    return
+            if token == "!shutdown":
+                if await _handleShutdownCommand(message):
+                    return
             if token == "!janeterminal":
                 if await _handleJaneTerminal(message):
                     return
@@ -880,6 +995,10 @@ async def on_message(message: discord.Message) -> None:
             return
         if await _handleJaneTerminal(message):
             return
+        if await _handleShutdownCommand(message):
+            return
+        if await _handleCopyServerCommand(message):
+            return
         if await _handleJaneRuntime(message):
             return
         if await _handleBgCheckCommand(message):
@@ -922,20 +1041,41 @@ async def handleRobloxRetry(interaction: discord.Interaction) -> None:
     if handled:
         return
 
+def has_utf8_bom(filepath):
+    with open(filepath, 'rb') as f:
+        header = f.read(3)
+        return header.startswith(codecs.BOM_UTF8)
 
 if __name__ == "__main__":
-    load_dotenv()
     runtimeLoggingConsole.configureConsoleLogging(level=logging.INFO)
     generalErrorLogPath = runtimeErrorLogging.configureGeneralErrorLogging(configModule=config)
     runtimeErrorLogging.installGlobalExceptionHooks()
     logging.info("General error log enabled: %s", generalErrorLogPath)
-    token = os.getenv("DISCORD_BOT_TOKEN") or getattr(config, "token")
+    lockAcquired, lockOwnerPid = _singleInstanceLock.acquire()
+    if not lockAcquired:
+        raise RuntimeError(
+            f"Another Jane process is already running for this repo (pid={int(lockOwnerPid or 0) or 'unknown'})."
+        )
+    envPath = find_dotenv(usecwd=True)
+    loadedEnvironmentVariables = load_dotenv(envPath, verbose=True, override=True)
+    if not loadedEnvironmentVariables:
+        raise RuntimeError(".env file not correctly loaded.")
+    if has_utf8_bom(envPath):
+        raise RuntimeError(".env file has a UTF-8 BOM.")
+    logging.info(f"Loaded Environment Variables: {loadedEnvironmentVariables}")
+    logging.info(f"Current .env file: {envPath}")
+    token = os.getenv("DISCORD_BOT_TOKEN")
     if not token:
         raise RuntimeError("DISCORD_BOT_TOKEN is not set.")
     if runtimeProcessControl is not None:
         runtimeProcessControl.clearRestartRequest()
-    botClient.run(token, log_handler=None)
-    if runtimeProcessControl is not None and runtimeProcessControl.restartRequested():
+    restartRequested = False
+    try:
+        botClient.run(token, log_handler=None)
+        restartRequested = bool(runtimeProcessControl is not None and runtimeProcessControl.restartRequested())
+    finally:
+        _singleInstanceLock.release()
+    if restartRequested and runtimeProcessControl is not None:
         logging.warning("Runtime restart requested; relaunching Jane.")
         runtimeProcessControl.relaunchCurrentProcess(scriptPath=__file__)
 

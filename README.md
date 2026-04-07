@@ -13,6 +13,8 @@ The goal of these docs is not to document every function. The goal is to make th
 - [Operations](docs/operations.md)
 - [Public / Private Split](docs/publicPrivateSplit.md)
 - [Feature Map](docs/features/README.md)
+- [New Dev Tasks](docs/newDevTasks.md)
+- [File Notes](docs/fileNotes/README.md)
 
 ## Repo Layout
 

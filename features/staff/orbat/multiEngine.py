@@ -5,6 +5,7 @@ import socket
 import ssl
 import threading
 import time
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 import config
@@ -14,6 +15,27 @@ from .multiRegistry import MultiOrbatSheetConfig, loadMultiOrbatRegistry
 
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+
+
+def _repoRoot() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def _resolveCredentialsPath(rawPath: str) -> str:
+    pathText = str(rawPath or "").strip()
+    if not pathText:
+        return ""
+
+    raw = Path(pathText).expanduser()
+    primary = raw if raw.is_absolute() else (_repoRoot() / raw).resolve()
+    if primary.exists():
+        return str(primary)
+
+    fallbackByName = _repoRoot() / "localOnly" / "credentials" / raw.name
+    if raw.name and fallbackByName.exists():
+        return str(fallbackByName)
+
+    return str(primary)
 
 
 def _isRateLimitError(exc: Exception) -> bool:
@@ -161,6 +183,7 @@ class MultiOrbatEngine:
         from google.oauth2.service_account import Credentials
 
         if path:
+            path = _resolveCredentialsPath(path)
             creds = Credentials.from_service_account_file(path, scopes=SCOPES)
             self._credentialsCache[cacheKey] = creds
             return creds

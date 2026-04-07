@@ -3,11 +3,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
-_repoRoot = Path(__file__).resolve().parent
-load_dotenv(_repoRoot / ".env")
-
+load_dotenv(find_dotenv(), override=True)
 
 def _envText(name: str, default: str = "") -> str:
     return str(os.getenv(name, default) or default).strip()
@@ -23,8 +21,6 @@ def _envFlag(name: str, default: bool = False) -> bool:
 # == Core Bot ==
 # Jane's Discord bot token. Keep this in `.env`, not in versioned config.
 token = _envText("DISCORD_BOT_TOKEN")
-
-#durr
 
 # Primary servers.
 serverId = 0
@@ -88,6 +84,8 @@ autoGitUpdatePreservePaths = [
     "backups/serverSnapshots",
     "backups/serverSnapshotsOffsite",
 ]
+copyServerRoleBatchCreateLimit = 12
+copyServerRoleBatchMutationLimit = 18
 
 # Optional extension layers.
 extraExtensionNames: list[str] = []
@@ -271,6 +269,7 @@ departmentOrbatLayoutsPath = "departmentOrbat/layouts.json"
 # ORBAT submit / review access.
 orbatSubmitterRoleIds = []
 orbatReviewerRoleIds = []
+orbatWriteGuildIds = []
 
 # LOA roles (apply based on the submitter's rank role).
 orbatLoaRoleMap = {
@@ -710,3 +709,4 @@ johnClankerBotId = 0
 
 # == Hidden / Misc ==
 skinAllowedUserIds = []
+bunnyCertificationRoleId = 0

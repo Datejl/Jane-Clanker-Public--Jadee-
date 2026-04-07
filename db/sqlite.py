@@ -9,7 +9,7 @@ _dbConn: Optional[aiosqlite.Connection] = None
 _dbConnInitLock = asyncio.Lock()
 _dbWriteLock = asyncio.Lock()
 log = logging.getLogger(__name__)
-_schemaVersionTarget = 8
+_schemaVersionTarget = 9
 _T = TypeVar("_T")
 
 
@@ -603,11 +603,13 @@ async def initDb():
             sourceAuthorId INTEGER NOT NULL,
             reactionEmoji TEXT NOT NULL,
             reactionCount INTEGER NOT NULL DEFAULT 0,
+            reactionBreakdownJson TEXT NOT NULL DEFAULT '{}',
             postedMessageId INTEGER,
             createdAt TEXT NOT NULL DEFAULT (datetime('now')),
             PRIMARY KEY (messageId, hallType)
         );
         """)
+        await _executeOptional("ALTER TABLE hall_reaction_posts ADD COLUMN reactionBreakdownJson TEXT NOT NULL DEFAULT '{}'")
         await db.execute("""
         CREATE TABLE IF NOT EXISTS silly_gambling_wallets (
             userId INTEGER PRIMARY KEY,
@@ -810,6 +812,14 @@ async def initDb():
             createdAt TEXT NOT NULL DEFAULT (datetime('now'))
         );
         """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS bunny_certification (
+            userId INTEGER NOT NULL,
+            currentStageId INTEGER NOT NULL DEFAULT 0,
+            lastTry TEXT
+        );
+        """)
+
         await db.execute("""
         CREATE TABLE IF NOT EXISTS workflow_runs (
             runId INTEGER PRIMARY KEY AUTOINCREMENT,
