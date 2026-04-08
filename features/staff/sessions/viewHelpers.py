@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Optional
 
 from features.staff.sessions import bgScanPipeline
+from features.staff.sessions.bgBuckets import adultBgReviewBucket, normalizeBgReviewBucket
 
 
 def parseSessionId(customId: str) -> int:
@@ -22,11 +23,21 @@ def isRecentIsoScan(scanAt: Optional[str], cacheDays: int) -> bool:
     return (datetime.now() - scanTime).days < int(cacheDays)
 
 
-def bgCandidates(attendees: list[dict]) -> list[dict]:
-    return [attendee for attendee in attendees if attendee["examGrade"] == "PASS"]
+def bgCandidates(attendees: list[dict], reviewBucket: Optional[str] = None) -> list[dict]:
+    candidates = [attendee for attendee in attendees if attendee["examGrade"] == "PASS"]
+    if reviewBucket is None:
+        return candidates
+    normalizedBucket = normalizeBgReviewBucket(reviewBucket)
+    return [
+        attendee
+        for attendee in candidates
+        if normalizeBgReviewBucket(attendee.get("bgReviewBucket"), default=adultBgReviewBucket) == normalizedBucket
+    ]
 
 
-def isBgQueueComplete(candidates: list[dict]) -> bool:
+def isBgQueueComplete(candidates: list[dict], reviewBucket: Optional[str] = None) -> bool:
+    if reviewBucket is not None:
+        candidates = bgCandidates(candidates, reviewBucket)
     if not candidates:
         return True
     return all(candidate.get("bgStatus") != "PENDING" for candidate in candidates)

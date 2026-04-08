@@ -66,6 +66,12 @@ class VoiceChatCog(commands.Cog):
             ephemeral=True,
         )
 
+    async def _safeDefer(self, interaction: Interaction) -> None:
+        await interactionRuntime.safeInteractionDefer(
+            interaction,
+            ephemeral=True,
+        )
+
     def _canCreateVoiceChat(self, member: Member, voiceChatType: str) -> bool:
         checker = _VOICE_CHAT_PERMISSION_CHECKS.get(voiceChatType)
         return bool(checker and checker(member))
@@ -114,7 +120,7 @@ class VoiceChatCog(commands.Cog):
             )
             return
 
-        await interaction.response.defer(ephemeral=True)
+        await self._safeDefer(interaction)
         voiceChannel = await self._createRequestedVoiceChat(
             voiceChatType=voiceChatType,
             cohost1=cohost1,
@@ -133,7 +139,7 @@ class VoiceChatCog(commands.Cog):
             await self._safeEphemeral(interaction, "Sorry, you can't clean voice chat channels.")
             return
 
-        await interaction.response.defer(ephemeral=True)
+        await self._safeDefer(interaction)
         await cleanVoiceChatsCategory(interaction=interaction, bot=self.bot)
 
     @app_commands.command(
@@ -156,7 +162,7 @@ class VoiceChatCog(commands.Cog):
             return
 
         if voice_chat_id is not None:
-            await interaction.response.defer(ephemeral=True)
+            await self._safeDefer(interaction)
             if not isManagedVoiceChannel(voice_chat_id):
                 await self._safeEphemeral(interaction, "That voice chat is static and can't be deleted.")
                 return
@@ -177,7 +183,7 @@ class VoiceChatCog(commands.Cog):
             await self._safeEphemeral(interaction, "Sorry, you can't delete that type of voice chat.")
             return
 
-        await interaction.response.defer(ephemeral=True)
+        await self._safeDefer(interaction)
         await deleteVoiceChannels(
             bot=self.bot,
             interaction=interaction,

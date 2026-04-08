@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 import discord
 from discord import ui
+from features.staff.sessions import bgBuckets
 
 log = logging.getLogger(__name__)
 
@@ -26,17 +27,23 @@ def _dep(name: str) -> Any:
 def buildBgAttendeeReviewEmbed(
     attendee: dict[str, Any],
     *,
+    reviewBucket: str = bgBuckets.adultBgReviewBucket,
     claimOwnerId: Optional[int] = None,
     includeClaimField: bool = True,
 ) -> discord.Embed:
     targetUserId = int(attendee["userId"])
+    normalizedBucket = bgBuckets.normalizeBgReviewBucket(reviewBucket)
     embed = discord.Embed(
-        title="BG Check",
+        title=f"BG Check ({bgBuckets.bgReviewBucketLabel(normalizedBucket)})",
         description=f"<@{targetUserId}>",
     )
     embed.add_field(
-        name="Inventory",
-        value=_dep("inventoryReviewIcon")(attendee.get("robloxInventoryScanStatus")),
+        name="Badges" if normalizedBucket == bgBuckets.minorBgReviewBucket else "Inventory",
+        value=(
+            _dep("badgeReviewIcon")(attendee.get("robloxBadgeScanStatus"))
+            if normalizedBucket == bgBuckets.minorBgReviewBucket
+            else _dep("inventoryReviewIcon")(attendee.get("robloxInventoryScanStatus"))
+        ),
         inline=True,
     )
     embed.add_field(
@@ -44,11 +51,12 @@ def buildBgAttendeeReviewEmbed(
         value=_dep("bgReviewIcon")(attendee["bgStatus"]),
         inline=True,
     )
-    embed.add_field(
-        name="Flagged",
-        value=_dep("flaggedReviewIcon")(attendee.get("robloxFlagged")),
-        inline=True,
-    )
+    if normalizedBucket != bgBuckets.minorBgReviewBucket:
+        embed.add_field(
+            name="Flagged",
+            value=_dep("flaggedReviewIcon")(attendee.get("robloxFlagged")),
+            inline=True,
+        )
     if includeClaimField:
         claimValue = "Unclaimed"
         if claimOwnerId:
@@ -61,8 +69,13 @@ async def openBgAttendeePanel(
     interaction: discord.Interaction,
     sessionId: int,
     targetUserId: int,
+    *,
+    reviewBucket: str = bgBuckets.adultBgReviewBucket,
 ) -> None:
-    attendees = _dep("bgCandidates")(await _dep("service").getAttendees(sessionId))
+    attendees = _dep("bgCandidates")(
+        await _dep("service").getAttendees(sessionId),
+        reviewBucket,
+    )
     attendee = next((row for row in attendees if int(row["userId"]) == int(targetUserId)), None)
     if attendee is None:
         await _dep("safeInteractionReply")(
@@ -74,22 +87,27 @@ async def openBgAttendeePanel(
 
     embed = buildBgAttendeeReviewEmbed(
         attendee,
+        reviewBucket=reviewBucket,
         claimOwnerId=_dep("getBgClaimOwnerId")(sessionId, targetUserId),
     )
     view = BgAttendeeReviewView(
         sessionId=sessionId,
         targetUserId=targetUserId,
         viewerId=int(interaction.user.id),
+        reviewBucket=reviewBucket,
     )
     await _dep("safeInteractionReply")(interaction, embed=embed, view=view, ephemeral=True)
 
 
 class BgAttendeeReviewView(ui.View):
-    def __init__(self, sessionId: int, targetUserId: int, viewerId: int):
+    def __init__(self, sessionId: int, targetUserId: int, viewerId: int, reviewBucket: str = bgBuckets.adultBgReviewBucket):
         super().__init__(timeout=900)
         self.sessionId = int(sessionId)
         self.targetUserId = int(targetUserId)
         self.viewerId = int(viewerId)
+        self.reviewBucket = bgBuckets.normalizeBgReviewBucket(reviewBucket)
+        if self.reviewBucket == bgBuckets.minorBgReviewBucket:
+            self.remove_item(self.outfitsBtn)
         self._syncClaimButton()
 
     def _syncClaimButton(self) -> None:
@@ -139,6 +157,7 @@ class BgAttendeeReviewView(ui.View):
         self._syncClaimButton()
         embed = buildBgAttendeeReviewEmbed(
             attendee,
+            reviewBucket=self.reviewBucket,
             claimOwnerId=_dep("getBgClaimOwnerId")(self.sessionId, self.targetUserId),
         )
         try:
@@ -250,7 +269,7 @@ class BgAttendeeReviewView(ui.View):
     async def infoBtn(self, interaction: discord.Interaction, _: ui.Button):
         if not await self._guard(interaction):
             return
-        await _dep("sendBgInfoForTarget")(interaction, self.sessionId, self.targetUserId)
+        await _dep("sendBgInfoForTarget")(interaction, self.sessionId, self.targetUserId, self.reviewBucket)
 
     @ui.button(label="Outfits", style=discord.ButtonStyle.secondary, row=1)
     async def outfitsBtn(self, interaction: discord.Interaction, _: ui.Button):
@@ -279,9 +298,10 @@ class BgOpenAttendeeModal(ui.Modal, title="Open Attendee Review"):
         required=True,
     )
 
-    def __init__(self, sessionId: int):
+    def __init__(self, sessionId: int, reviewBucket: str = bgBuckets.adultBgReviewBucket):
         super().__init__()
         self.sessionId = int(sessionId)
+        self.reviewBucket = bgBuckets.normalizeBgReviewBucket(reviewBucket)
 
     async def on_submit(self, interaction: discord.Interaction):
         if not await _dep("requireModPermission")(interaction):
@@ -297,7 +317,7 @@ class BgOpenAttendeeModal(ui.Modal, title="Open Attendee Review"):
             )
             return
 
-        attendees = _dep("bgCandidates")(await _dep("service").getAttendees(self.sessionId))
+        attendees = _dep("bgCandidates")(await _dep("service").getAttendees(self.sessionId), self.reviewBucket)
         if index < 1 or index > len(attendees):
             await _dep("safeInteractionReply")(
                 interaction,
@@ -312,17 +332,19 @@ class BgOpenAttendeeModal(ui.Modal, title="Open Attendee Review"):
         # from abandoned claims (e.g., reviewer AFK/asleep).
         _dep("setBgClaimOwnerId")(self.sessionId, targetUserId, int(interaction.user.id))
         await _dep("requestBgQueueMessageUpdate")(interaction.client, self.sessionId)
-        await openBgAttendeePanel(interaction, self.sessionId, targetUserId)
+        await openBgAttendeePanel(interaction, self.sessionId, targetUserId, reviewBucket=self.reviewBucket)
 
 
 class BgQueueView(ui.View):
-    def __init__(self, sessionId: int):
+    def __init__(self, sessionId: int, *, reviewBucket: str = bgBuckets.adultBgReviewBucket):
         super().__init__(timeout=None)
         self.sessionId = int(sessionId)
-        self.finishBtn.custom_id = f"bgqueue:finish:{sessionId}"
-        self.openAttendeeBtn.custom_id = f"bgqueue:open:{sessionId}"
-        self.nextPendingBtn.custom_id = f"bgqueue:next:{sessionId}"
-        self.refreshBtn.custom_id = f"bgqueue:refresh:{sessionId}"
+        self.reviewBucket = bgBuckets.normalizeBgReviewBucket(reviewBucket)
+        bucketToken = self.reviewBucket
+        self.finishBtn.custom_id = f"bgqueue:finish:{sessionId}:{bucketToken}"
+        self.openAttendeeBtn.custom_id = f"bgqueue:open:{sessionId}:{bucketToken}"
+        self.nextPendingBtn.custom_id = f"bgqueue:next:{sessionId}:{bucketToken}"
+        self.refreshBtn.custom_id = f"bgqueue:refresh:{sessionId}:{bucketToken}"
 
     @ui.button(label="Finish", style=discord.ButtonStyle.success, row=0)
     async def finishBtn(self, interaction: discord.Interaction, _: ui.Button):
@@ -338,7 +360,7 @@ class BgQueueView(ui.View):
             )
             return
 
-        candidates = _dep("bgCandidates")(attendees)
+        candidates = _dep("bgCandidates")(attendees, self.reviewBucket)
         if not candidates:
             for child in self.children:
                 child.disabled = True
@@ -362,6 +384,7 @@ class BgQueueView(ui.View):
                     sessionId=self.sessionId,
                     requesterId=int(interaction.user.id),
                     pendingCount=len(pending),
+                    reviewBucket=self.reviewBucket,
                 ),
                 ephemeral=True,
             )
@@ -370,21 +393,26 @@ class BgQueueView(ui.View):
         await _dep("closeBgQueueControls")(
             interaction.client,
             self.sessionId,
+            reviewBucket=self.reviewBucket,
             clearMessageReference=False,
         )
-        await _dep("safeInteractionReply")(interaction, "All attendees processed.", ephemeral=False)
+        await _dep("safeInteractionReply")(
+            interaction,
+            f"{bgBuckets.bgReviewBucketLabel(self.reviewBucket)} queue closed.",
+            ephemeral=False,
+        )
 
     @ui.button(label="Open Attendee", style=discord.ButtonStyle.primary)
     async def openAttendeeBtn(self, interaction: discord.Interaction, _: ui.Button):
         if not await _dep("requireModPermission")(interaction):
             return
-        await _dep("safeInteractionSendModal")(interaction, BgOpenAttendeeModal(self.sessionId))
+        await _dep("safeInteractionSendModal")(interaction, BgOpenAttendeeModal(self.sessionId, self.reviewBucket))
 
     @ui.button(label="Next Pending", style=discord.ButtonStyle.secondary)
     async def nextPendingBtn(self, interaction: discord.Interaction, _: ui.Button):
         if not await _dep("requireModPermission")(interaction):
             return
-        attendees = _dep("bgCandidates")(await _dep("service").getAttendees(self.sessionId))
+        attendees = _dep("bgCandidates")(await _dep("service").getAttendees(self.sessionId), self.reviewBucket)
         pendingRows = [row for row in attendees if row.get("bgStatus") == "PENDING"]
         if not pendingRows:
             await _dep("safeInteractionReply")(interaction, "No pending attendees remain.", ephemeral=True)
@@ -411,7 +439,7 @@ class BgQueueView(ui.View):
                 ephemeral=True,
             )
             return
-        await openBgAttendeePanel(interaction, self.sessionId, int(pending["userId"]))
+        await openBgAttendeePanel(interaction, self.sessionId, int(pending["userId"]), reviewBucket=self.reviewBucket)
 
     @ui.button(label="Refresh", style=discord.ButtonStyle.secondary)
     async def refreshBtn(self, interaction: discord.Interaction, _: ui.Button):
@@ -422,11 +450,12 @@ class BgQueueView(ui.View):
 
 
 class BgQueueForceCloseConfirmView(ui.View):
-    def __init__(self, sessionId: int, requesterId: int, pendingCount: int):
+    def __init__(self, sessionId: int, requesterId: int, pendingCount: int, reviewBucket: str):
         super().__init__(timeout=180)
         self.sessionId = int(sessionId)
         self.requesterId = int(requesterId)
         self.pendingCount = max(0, int(pendingCount))
+        self.reviewBucket = bgBuckets.normalizeBgReviewBucket(reviewBucket)
 
     @ui.button(label="Confirm", style=discord.ButtonStyle.danger)
     async def confirmBtn(self, interaction: discord.Interaction, _: ui.Button):
@@ -444,6 +473,7 @@ class BgQueueForceCloseConfirmView(ui.View):
         await _dep("closeBgQueueControls")(
             interaction.client,
             self.sessionId,
+            reviewBucket=self.reviewBucket,
             clearMessageReference=True,
         )
         for child in self.children:

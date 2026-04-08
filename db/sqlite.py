@@ -9,7 +9,7 @@ _dbConn: Optional[aiosqlite.Connection] = None
 _dbConnInitLock = asyncio.Lock()
 _dbWriteLock = asyncio.Lock()
 log = logging.getLogger(__name__)
-_schemaVersionTarget = 9
+_schemaVersionTarget = 11
 _T = TypeVar("_T")
 
 
@@ -74,10 +74,12 @@ async def initDb():
             gradingIndex INTEGER NOT NULL DEFAULT 0,
             createdAt TEXT NOT NULL DEFAULT (datetime('now')),
             finishedAt TEXT,
-            bgQueueMessageId INTEGER
+            bgQueueMessageId INTEGER,
+            bgQueueMinorMessageId INTEGER
         );
         """)
         await _executeOptional("ALTER TABLE sessions ADD COLUMN bgQueueMessageId INTEGER")
+        await _executeOptional("ALTER TABLE sessions ADD COLUMN bgQueueMinorMessageId INTEGER")
         await db.execute("""
         CREATE TABLE IF NOT EXISTS attendees (
             sessionId INTEGER NOT NULL,
@@ -86,9 +88,11 @@ async def initDb():
             examGrade TEXT NOT NULL DEFAULT 'NOT_GRADED',  -- NOT_GRADED/PASS/FAIL
             bgStatus TEXT NOT NULL DEFAULT 'PENDING',      -- PENDING/APPROVED/REJECTED
             credited INTEGER NOT NULL DEFAULT 0,           -- host point credited? 0/1
+            bgReviewBucket TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (sessionId, userId)
         );
         """)
+        await _executeOptional("ALTER TABLE attendees ADD COLUMN bgReviewBucket TEXT NOT NULL DEFAULT ''")
         await db.execute("""
         CREATE TABLE IF NOT EXISTS bg_review_actions (
             actionId INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -496,6 +500,27 @@ async def initDb():
         );
         """)
         await db.execute("""
+        CREATE TABLE IF NOT EXISTS training_result_logs (
+            messageId INTEGER PRIMARY KEY,
+            sourceGuildId INTEGER NOT NULL DEFAULT 0,
+            sourceChannelId INTEGER NOT NULL DEFAULT 0,
+            sourceAuthorId INTEGER NOT NULL DEFAULT 0,
+            sourceCreatedAt TEXT NOT NULL,
+            eventKind TEXT NOT NULL DEFAULT '',
+            certType TEXT NOT NULL DEFAULT '',
+            certVariant TEXT NOT NULL DEFAULT '',
+            title TEXT NOT NULL DEFAULT '',
+            hostId INTEGER NOT NULL DEFAULT 0,
+            hostText TEXT NOT NULL DEFAULT '',
+            passCount INTEGER NOT NULL DEFAULT 0,
+            failCount INTEGER NOT NULL DEFAULT 0,
+            mirrorChannelId INTEGER NOT NULL DEFAULT 0,
+            mirrorMessageId INTEGER NOT NULL DEFAULT 0,
+            rawContent TEXT NOT NULL DEFAULT '',
+            createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        """)
+        await db.execute("""
         CREATE TABLE IF NOT EXISTS anrd_payment_requests (
             requestId INTEGER PRIMARY KEY AUTOINCREMENT,
             guildId INTEGER NOT NULL,
@@ -812,13 +837,6 @@ async def initDb():
             createdAt TEXT NOT NULL DEFAULT (datetime('now'))
         );
         """)
-        await db.execute("""
-        CREATE TABLE IF NOT EXISTS bunny_certification (
-            userId INTEGER NOT NULL,
-            currentStageId INTEGER NOT NULL DEFAULT 0,
-            lastTry TEXT
-        );
-        """)
 
         await db.execute("""
         CREATE TABLE IF NOT EXISTS workflow_runs (
@@ -919,6 +937,9 @@ async def initDb():
             "CREATE INDEX IF NOT EXISTS idx_ribbon_events_request ON ribbon_request_events(requestId, createdAt)",
             "CREATE INDEX IF NOT EXISTS idx_bg_flag_rules_type ON bg_flag_rules(ruleType)",
             "CREATE INDEX IF NOT EXISTS idx_john_event_log_channel_processed ON john_event_log_messages(channelId, processedAt)",
+            "CREATE INDEX IF NOT EXISTS idx_training_result_logs_host_created ON training_result_logs(hostId, sourceCreatedAt)",
+            "CREATE INDEX IF NOT EXISTS idx_training_result_logs_type_created ON training_result_logs(certType, certVariant, sourceCreatedAt)",
+            "CREATE INDEX IF NOT EXISTS idx_training_result_logs_source_channel_created ON training_result_logs(sourceChannelId, sourceCreatedAt)",
             "CREATE INDEX IF NOT EXISTS idx_anrd_payment_status ON anrd_payment_requests(status)",
             "CREATE INDEX IF NOT EXISTS idx_anrd_payment_review_msg ON anrd_payment_requests(reviewMessageId)",
             "CREATE INDEX IF NOT EXISTS idx_curfew_targets_enabled ON curfew_targets(enabled, guildId, userId)",

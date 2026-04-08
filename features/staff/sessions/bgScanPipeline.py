@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Awaitable, Callable, Optional
 
 import config
+from features.staff.sessions import bgBuckets
 from features.staff.sessions import roblox, service
 
 FlagRules = tuple[
@@ -445,6 +446,10 @@ async def scanRobloxFlagsForAttendees(
     for attendee in attendees:
         if attendee.get("examGrade") != "PASS":
             continue
+        reviewBucket = bgBuckets.normalizeBgReviewBucket(
+            attendee.get("bgReviewBucket"),
+            default=bgBuckets.adultBgReviewBucket,
+        )
         identity: Optional[RobloxIdentity] = None
 
         async def getIdentity() -> RobloxIdentity:
@@ -453,7 +458,7 @@ async def scanRobloxFlagsForAttendees(
                 identity = await resolveRobloxIdentity(attendee)
             return identity
 
-        if scanGroups:
+        if reviewBucket == bgBuckets.adultBgReviewBucket and scanGroups:
             if await scanRobloxGroupsForAttendee(
                 sessionId,
                 attendee,
@@ -464,7 +469,7 @@ async def scanRobloxFlagsForAttendees(
                 accountAgeDays,
             ):
                 updated = True
-        if scanInventory:
+        if reviewBucket == bgBuckets.adultBgReviewBucket and scanInventory:
             previousInventoryStatus = attendee.get("robloxInventoryScanStatus")
             if await scanRobloxInventoryForAttendee(
                 sessionId,

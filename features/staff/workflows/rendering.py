@@ -5,6 +5,8 @@ from typing import Any, Optional
 
 import discord
 
+from runtime import textFormatting as textFormattingRuntime
+
 
 def _parseDbTime(rawValue: Any) -> Optional[datetime]:
     text = str(rawValue or "").strip()
@@ -73,14 +75,31 @@ def buildCompactSummary(
             toLabel = str(latestEvent.get("toStateLabel") or latestEvent.get("toStateKey") or currentLabel).strip()
             lines.append(f"**Last Change:** moved to {toLabel} ({actorText})")
 
-    return "\n".join(lines)[:1024]
+    return textFormattingRuntime.joinLinesAndClip(lines, 1024)
 
 
 def clipEmbedValue(value: object, *, limit: int = 1024) -> str:
-    text = str(value or "").strip()
-    if len(text) <= limit:
-        return text or "(none)"
-    return f"{text[: max(1, limit - 3)]}..."
+    return textFormattingRuntime.clipText(
+        value,
+        limit,
+        emptyText="(none)",
+        strip=True,
+    )
+
+
+def buildWorkflowEventSummary(rows: list[dict[str, Any]], *, limit: int = 1024) -> str:
+    if not rows:
+        return ""
+
+    lines: list[str] = []
+    for row in reversed(rows):
+        toLabel = str(row.get("toStateLabel") or row.get("toStateKey") or "Unknown").strip()
+        actorId = int(row.get("actorId") or 0)
+        actorText = f"<@{actorId}>" if actorId > 0 else "system"
+        note = str(row.get("note") or "").strip()
+        transitionText = f"{toLabel} - {note}" if note else toLabel
+        lines.append(f"{_discordTimestamp(row.get('createdAt'))}: {transitionText} ({actorText})")
+    return textFormattingRuntime.joinLinesAndClip(lines, limit)
 
 
 def buildReviewStatusBlock(
@@ -131,6 +150,7 @@ def addReviewWorkflowFields(
 __all__ = [
     "addReviewWorkflowFields",
     "buildCompactSummary",
+    "buildWorkflowEventSummary",
     "buildReviewStatusBlock",
     "clipEmbedValue",
 ]

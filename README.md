@@ -83,4 +83,6 @@ If you want a public-safe copy, export one with:
 python tools\exportPublicRepo.py C:\path\to\jane-public --clean
 ```
 
+`--clean` is safe to use against a cloned copy of the public repo. Jane preserves the target repo's `.git` directory and replaces the working tree around it.
+
 That export path does a secret scan and a smoke test so the public copy is less likely to be broken or embarrassing.

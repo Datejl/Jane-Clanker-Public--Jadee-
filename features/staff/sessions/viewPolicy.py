@@ -47,9 +47,25 @@ def resolveBgQueuePingRoleId(channel: object) -> int:
         reviewRoleId = int(getattr(config, "bgReviewModeratorRoleId", 0) or 0)
     except (TypeError, ValueError):
         reviewRoleId = 0
+    try:
+        adultReviewGuildId = int(getattr(config, "bgCheckAdultReviewGuildId", 0) or 0)
+    except (TypeError, ValueError):
+        adultReviewGuildId = 0
+    try:
+        minorReviewGuildId = int(getattr(config, "bgCheckMinorReviewGuildId", 0) or 0)
+    except (TypeError, ValueError):
+        minorReviewGuildId = 0
+    try:
+        minorReviewRoleId = int(getattr(config, "bgCheckMinorReviewRoleId", 0) or 0)
+    except (TypeError, ValueError):
+        minorReviewRoleId = 0
 
     if guildId > 0 and mainGuildId > 0 and guildId == mainGuildId:
         return mainRoleId if mainRoleId > 0 else reviewRoleId
+    if guildId > 0 and adultReviewGuildId > 0 and guildId == adultReviewGuildId:
+        return reviewRoleId if reviewRoleId > 0 else mainRoleId
+    if guildId > 0 and minorReviewGuildId > 0 and guildId == minorReviewGuildId:
+        return minorReviewRoleId
     return reviewRoleId if reviewRoleId > 0 else mainRoleId
 
 
@@ -93,4 +109,3 @@ def robloxGroupUrl() -> str:
     if groupId:
         return f"https://www.roblox.com/groups/{groupId}"
     return "https://www.roblox.com/communities/"
-

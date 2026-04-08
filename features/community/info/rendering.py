@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 
 import discord
 
+from runtime import textFormatting as textFormattingRuntime
+
 
 def _discordTimestamp(value: datetime | None, style: str = "f") -> str:
     if value is None:
@@ -13,9 +15,7 @@ def _discordTimestamp(value: datetime | None, style: str = "f") -> str:
 
 
 def _clip(text: str, maxLen: int) -> str:
-    if len(text) <= maxLen:
-        return text
-    return f"{text[: max(1, maxLen - 3)]}..."
+    return textFormattingRuntime.clipText(text, maxLen)
 
 
 def buildUserInfoEmbed(member: discord.Member) -> discord.Embed:

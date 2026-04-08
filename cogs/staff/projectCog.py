@@ -15,6 +15,7 @@ from features.staff.projects import workflowBridge as projectWorkflowBridge
 from features.staff.workflows import rendering as workflowRendering
 from runtime import interaction as interactionRuntime
 from runtime import permissions as runtimePermissions
+from runtime import textFormatting as textFormattingRuntime
 
 log = logging.getLogger(__name__)
 
@@ -70,10 +71,7 @@ def _statusColor(status: object) -> discord.Color:
 
 
 def _clip(value: object, maxLen: int) -> str:
-    text = str(value or "").strip()
-    if len(text) <= maxLen:
-        return text
-    return f"{text[: max(1, maxLen - 3)]}..."
+    return textFormattingRuntime.clipText(value, maxLen, strip=True)
 
 
 def _parseDbDatetime(value: object) -> Optional[datetime]:

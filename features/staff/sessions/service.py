@@ -2,6 +2,7 @@ import hashlib
 import json
 from typing import Optional, List, Dict
 from db.sqlite import fetchOne, fetchAll, execute, executeReturnId, executeMany
+from features.staff.sessions.bgBuckets import adultBgReviewBucket, minorBgReviewBucket, normalizeBgReviewBucket
 
 
 def _jsonArray(value) -> str:
@@ -71,10 +72,55 @@ async def expireStaleSessions(maxAgeHours: int = 48, statuses: Optional[List[str
     return sessionIds
 
 
-async def setBgQueueMessage(sessionId: int, messageId: int):
+async def setBgQueueMessage(
+    sessionId: int,
+    messageId: int,
+    *,
+    reviewBucket: str = adultBgReviewBucket,
+):
+    normalizedBucket = normalizeBgReviewBucket(reviewBucket)
+    columnName = "bgQueueMinorMessageId" if normalizedBucket == minorBgReviewBucket else "bgQueueMessageId"
     await execute(
-        "UPDATE sessions SET bgQueueMessageId = ? WHERE sessionId = ?",
-        (messageId, sessionId)
+        f"UPDATE sessions SET {columnName} = ? WHERE sessionId = ?",
+        (int(messageId), int(sessionId))
+    )
+
+
+async def setBgReviewBucket(sessionId: int, userId: int, reviewBucket: str) -> None:
+    await execute(
+        "UPDATE attendees SET bgReviewBucket = ? WHERE sessionId = ? AND userId = ?",
+        (
+            normalizeBgReviewBucket(reviewBucket),
+            int(sessionId),
+            int(userId),
+        ),
+    )
+
+
+async def setBgReviewBucketsBulk(
+    sessionId: int,
+    reviewBucketsByUserId: dict[int, str],
+) -> None:
+    normalizedRows: list[tuple[str, int, int]] = []
+    for rawUserId, rawBucket in dict(reviewBucketsByUserId or {}).items():
+        try:
+            userId = int(rawUserId)
+        except (TypeError, ValueError):
+            continue
+        if userId <= 0:
+            continue
+        normalizedRows.append(
+            (
+                normalizeBgReviewBucket(rawBucket),
+                int(sessionId),
+                userId,
+            )
+        )
+    if not normalizedRows:
+        return
+    await executeMany(
+        "UPDATE attendees SET bgReviewBucket = ? WHERE sessionId = ? AND userId = ?",
+        normalizedRows,
     )
 
 

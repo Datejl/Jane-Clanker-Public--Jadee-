@@ -18,6 +18,7 @@ from runtime import copyServerState as runtimeCopyServerState
 from runtime import helpMenu as runtimeHelpMenu
 from runtime import interaction as interactionRuntime
 from runtime import webhooks as runtimeWebhooks
+from features.staff.sessions import bgBuckets
 
 try:
     from features.operations.serverSafety.filters import filterLiveChannels, filterSnapshotChannelRows
@@ -363,49 +364,7 @@ def _applyPinnedResumeEstimate(
     existingState: dict[str, Any] | None,
 ) -> tuple[dict[str, int], int]:
     merged = dict(resumeEstimate or {})
-    liveResumeRoleNumber = max(0, int(merged.get("resumeRoleNumber") or 0))
-    liveContiguousCompletedRoles = max(0, int(merged.get("contiguousCompletedRoles") or 0))
-    if not isinstance(existingState, dict):
-        return merged, int(liveResumeRoleNumber)
-
-    pinnedResumeRoleNumber = max(0, int(existingState.get("resumeRoleNumber") or 0))
-    pinnedContiguousCompletedRoles = max(0, int(existingState.get("contiguousCompletedRoles") or 0))
-    totalRoles = max(0, int(merged.get("totalRoles") or existingState.get("totalRoles") or 0))
-
-    effectiveResumeRoleNumber = int(liveResumeRoleNumber)
-    effectiveContiguousCompletedRoles = int(liveContiguousCompletedRoles)
-    usePinnedCheckpoint = False
-
-    if pinnedResumeRoleNumber > 0 or pinnedContiguousCompletedRoles > 0:
-        if liveResumeRoleNumber <= 0 and liveContiguousCompletedRoles <= 0:
-            usePinnedCheckpoint = True
-        elif pinnedContiguousCompletedRoles > liveContiguousCompletedRoles:
-            usePinnedCheckpoint = True
-        elif pinnedResumeRoleNumber > liveResumeRoleNumber:
-            usePinnedCheckpoint = True
-
-    if usePinnedCheckpoint:
-        effectiveResumeRoleNumber = int(max(liveResumeRoleNumber, pinnedResumeRoleNumber))
-        effectiveContiguousCompletedRoles = int(max(liveContiguousCompletedRoles, pinnedContiguousCompletedRoles))
-        merged["resumeRoleNumber"] = int(effectiveResumeRoleNumber)
-        merged["resumeRoleName"] = str(existingState.get("resumeRoleName") or merged.get("resumeRoleName") or "")
-        merged["resumeRoleState"] = "pinned checkpoint"
-
-    if effectiveResumeRoleNumber <= 0 and effectiveContiguousCompletedRoles <= 0:
-        return merged, 0
-
-    if totalRoles > 0:
-        merged["totalRoles"] = int(totalRoles)
-        merged["contiguousCompletedRoles"] = min(int(totalRoles), int(max(0, effectiveContiguousCompletedRoles)))
-        merged["matchedRoles"] = max(
-            int(merged.get("matchedRoles") or 0),
-            int(merged.get("contiguousCompletedRoles") or 0),
-        )
-        merged["missingRoles"] = max(
-            0,
-            int(totalRoles - max(int(merged.get("matchedRoles") or 0), int(effectiveContiguousCompletedRoles))),
-        )
-    return merged, int(effectiveResumeRoleNumber)
+    return merged, 0
 
 
 class CopyServerConfirmView(discord.ui.View):
@@ -998,17 +957,11 @@ class CopyServerConfirmView(discord.ui.View):
                 self.lastPausedResult = dict(result)
                 self.lastTargetBackupPath = str(targetBackupPath)
                 self.autoRetryAt = None
-                self.resumeRoleFloor = max(
-                    int(self.resumeRoleFloor or 0),
-                    int(result.get("resumeRoleNumber") or 0),
-                )
-                self.resumeEstimate["contiguousCompletedRoles"] = max(
-                    int(self.resumeEstimate.get("contiguousCompletedRoles") or 0),
-                    int(result.get("contiguousCompletedRoles") or 0),
-                )
-                self.resumeEstimate["resumeRoleNumber"] = int(self.resumeRoleFloor or 0)
+                self.resumeRoleFloor = 0
+                self.resumeEstimate["contiguousCompletedRoles"] = int(result.get("contiguousCompletedRoles") or 0)
+                self.resumeEstimate["resumeRoleNumber"] = int(result.get("resumeRoleNumber") or 0)
                 self.resumeEstimate["resumeRoleName"] = str(result.get("resumeRoleName") or self.resumeEstimate.get("resumeRoleName") or "")
-                self.resumeEstimate["resumeRoleState"] = "pinned checkpoint"
+                self.resumeEstimate["resumeRoleState"] = str(result.get("pauseReason") or self.resumeEstimate.get("resumeRoleState") or "")
                 self.resumeEstimate["totalRoles"] = int(result.get("totalRoles") or self.resumeEstimate.get("totalRoles") or 0)
                 runtimeCopyServerState.saveGuildState(
                     int(self.targetGuild.id),
@@ -1016,7 +969,7 @@ class CopyServerConfirmView(discord.ui.View):
                     sourceGuildLabel=self.sourceGuildLabel,
                     snapshotPath=str(self.snapshotPath),
                     targetBackupPath=str(getattr(targetBackupPath, "resolve", lambda: targetBackupPath)()),
-                    resumeRoleNumber=int(self.resumeRoleFloor or 0),
+                    resumeRoleNumber=int(result.get("resumeRoleNumber") or 0),
                     resumeRoleName=str(self.resumeEstimate.get("resumeRoleName") or ""),
                     contiguousCompletedRoles=int(self.resumeEstimate.get("contiguousCompletedRoles") or 0),
                     totalRoles=int(self.resumeEstimate.get("totalRoles") or 0),
@@ -1305,6 +1258,162 @@ class TextCommandRouter:
         self._activeCopyServerGuildIds: set[int] = set()
         self._pendingApprovedGuildCopyServerWarnings: dict[tuple[int, int], datetime] = {}
         self._approvedGuildCopyServerWarningTtlSec = 300
+
+    async def createBgCheckQueue(
+        self,
+        *,
+        guild: discord.Guild,
+        channel: discord.abc.Messageable,
+        actor: discord.Member,
+        sourceMessage: discord.Message | None = None,
+    ) -> tuple[bool, str]:
+        pendingRoleId = getattr(self.config, "pendingBgRoleId", None)
+        try:
+            pendingRoleIdInt = int(pendingRoleId) if pendingRoleId else 0
+        except (TypeError, ValueError):
+            pendingRoleIdInt = 0
+
+        sourceGuildId = getattr(self.config, "bgCheckSourceGuildId", None) or getattr(self.config, "serverId", None) or guild.id
+        try:
+            sourceGuildIdInt = int(sourceGuildId)
+        except (TypeError, ValueError):
+            sourceGuildIdInt = int(guild.id)
+
+        progress = runtimeBgQueueCommand.BgQueueProgressReporter(
+            channel=channel,
+            sourceGuildId=sourceGuildIdInt,
+            totalSteps=5,
+        )
+        await progress.start("Resolving the source server and pending BG role...")
+
+        if pendingRoleIdInt <= 0:
+            await progress.update(
+                stepIndex=1,
+                detail="Pending Background Check role is not configured.",
+                failed=True,
+            )
+            return False, "Pending Background Check role is not configured."
+
+        sourceGuild = self.botClient.get_guild(sourceGuildIdInt)
+        if sourceGuild is None:
+            await progress.update(
+                stepIndex=1,
+                detail="Source guild is not available to Jane right now.",
+                failed=True,
+            )
+            return False, "Source guild is not available to Jane right now."
+
+        pendingRole = sourceGuild.get_role(pendingRoleIdInt)
+        if pendingRole is None:
+            await progress.update(
+                stepIndex=1,
+                detail="Pending Background Check role could not be found in the source server.",
+                failed=True,
+            )
+            return False, "Pending Background Check role could not be found in the source server."
+
+        try:
+            pendingMembers = await runtimeBgQueueCommand.collectPendingMembers(
+                sourceGuild,
+                pendingRole,
+                pendingRoleIdInt,
+                progress,
+            )
+            if not pendingMembers:
+                await progress.update(
+                    stepIndex=2,
+                    detail="No members currently have the Pending Background Check role.",
+                    pendingCount=0,
+                    failed=True,
+                )
+                return False, "No members currently have the Pending Background Check role."
+
+            await progress.update(
+                stepIndex=3,
+                detail="Creating the BG queue session and attendee list...",
+                pendingCount=len(pendingMembers),
+            )
+
+            me = getattr(guild, "me", None)
+            sourceChannel = getattr(sourceMessage, "channel", None)
+            if (
+                sourceMessage is not None
+                and me is not None
+                and hasattr(sourceChannel, "permissions_for")
+                and bool(sourceChannel.permissions_for(me).manage_messages)
+            ):
+                try:
+                    await sourceMessage.delete()
+                except Exception:
+                    pass
+
+            sessionId = await self.sessionService.createSession(
+                guildId=int(sourceGuild.id),
+                channelId=int(getattr(channel, "id", 0) or 0),
+                messageId=int(getattr(sourceMessage, "id", 0) or 0),
+                sessionType="bg-check",
+                hostId=int(actor.id),
+                password=os.urandom(8).hex(),
+            )
+            attendeeUserIds = [int(member.id) for member in pendingMembers]
+            await self.sessionService.addAttendeesBulk(
+                int(sessionId),
+                attendeeUserIds,
+                examGrade="PASS",
+            )
+            bucketCounts = await self.sessionViews.ensureBgReviewBuckets(
+                self.botClient,
+                int(sessionId),
+                sourceGuild,
+            )
+            adultCount = int(bucketCounts.get(bgBuckets.adultBgReviewBucket, 0) or 0)
+            minorCount = int(bucketCounts.get(bgBuckets.minorBgReviewBucket, 0) or 0)
+
+            await progress.update(
+                stepIndex=4,
+                detail=(
+                    "Posting the split BG queues...\n"
+                    f"+18: `{adultCount}` attendee(s)\n"
+                    f"-18: `{minorCount}` attendee(s)"
+                ),
+                pendingCount=len(pendingMembers),
+            )
+            await self.sessionViews.postBgQueue(self.botClient, sessionId, sourceGuild)
+            updatedSession = await self.sessionService.getSession(int(sessionId))
+            adultQueueMessageId = int((updatedSession or {}).get("bgQueueMessageId") or 0)
+            minorQueueMessageId = int((updatedSession or {}).get("bgQueueMinorMessageId") or 0)
+            if adultQueueMessageId <= 0 and minorQueueMessageId <= 0:
+                await progress.update(
+                    stepIndex=5,
+                    detail="BG queue channels are not configured or inaccessible.",
+                    pendingCount=len(pendingMembers),
+                    failed=True,
+                )
+                return False, "BG queue channels are not configured or inaccessible."
+            await progress.update(
+                stepIndex=5,
+                detail=(
+                    f"Background-check queues created for `{len(pendingMembers)}` member(s).\n"
+                    f"+18 routed: `{adultCount}`\n"
+                    f"-18 routed: `{minorCount}`\n"
+                    "Initial Roblox scans will continue in the background."
+                ),
+                pendingCount=len(pendingMembers),
+                finished=True,
+            )
+            return True, (
+                f"Background-check queues created for `{len(pendingMembers)}` member(s).\n"
+                f"+18 routed: `{adultCount}`\n"
+                f"-18 routed: `{minorCount}`"
+            )
+        except Exception as exc:
+            await progress.update(
+                stepIndex=5,
+                detail=f"Queue creation failed: `{exc.__class__.__name__}`",
+                pendingCount=None,
+                failed=True,
+            )
+            raise
 
     def _formatIsoTimestampOrNever(self, rawValue: object) -> str:
         rawText = str(rawValue or "").strip()
@@ -1777,6 +1886,45 @@ class TextCommandRouter:
         await self.botClient.close()
         return True
 
+    async def handleAllowServer(self, message: discord.Message) -> bool:
+        if message.author.bot or not message.content:
+            return False
+
+        token = self.firstLowerToken(message.content or "")
+        if token != "!allowserver":
+            return False
+
+        if not self._shutdownAllowed(int(message.author.id)):
+            return True
+
+        if not message.guild or not isinstance(message.author, discord.Member):
+            return True
+
+        if message.guild.me and message.channel.permissions_for(message.guild.me).manage_messages:
+            try:
+                await message.delete()
+            except Exception:
+                pass
+
+        status = str(self.allowGuildForCommands(int(message.guild.id)) or "invalid").strip().lower()
+        if status == "already":
+            response = "This server is already in Jane's allowed guild list."
+        elif status == "runtime-only":
+            response = "Added this server for the current runtime, but Jane could not persist it into config.py."
+        elif status == "added":
+            response = "Added this server to Jane's allowed guild list."
+        else:
+            response = "Jane could not add this server to the allowed guild list."
+
+        try:
+            await message.channel.send(
+                response,
+                allowed_mentions=discord.AllowedMentions(users=False, roles=False, everyone=False),
+            )
+        except Exception:
+            pass
+        return True
+
     async def handleCopyServer(self, message: discord.Message) -> bool:
         if message.author.bot or not message.content:
             return False
@@ -1946,133 +2094,14 @@ class TextCommandRouter:
         if not self.permissions.hasBgCheckCertifiedRole(message.author):
             await message.channel.send("You do not have permission to start background-check queues.")
             return True
-
-        pendingRoleId = getattr(self.config, "pendingBgRoleId", None)
-        try:
-            pendingRoleIdInt = int(pendingRoleId) if pendingRoleId else 0
-        except (TypeError, ValueError):
-            pendingRoleIdInt = 0
-        if pendingRoleIdInt <= 0:
-            await message.channel.send("Pending Background Check role is not configured.")
-            return True
-
-        sourceGuildId = getattr(self.config, "bgCheckSourceGuildId", None) or getattr(self.config, "serverId", None) or message.guild.id
-        try:
-            sourceGuildIdInt = int(sourceGuildId)
-        except (TypeError, ValueError):
-            sourceGuildIdInt = int(message.guild.id)
-
-        progress = runtimeBgQueueCommand.BgQueueProgressReporter(
+        ok, response = await self.createBgCheckQueue(
+            guild=message.guild,
             channel=message.channel,
-            sourceGuildId=sourceGuildIdInt,
-            totalSteps=5,
+            actor=message.author,
+            sourceMessage=message,
         )
-        await progress.start("Resolving the source server and pending BG role...")
-
-        sourceGuild = self.botClient.get_guild(sourceGuildIdInt)
-        if sourceGuild is None:
-            await progress.update(
-                stepIndex=1,
-                detail="Source guild is not available to Jane right now.",
-                failed=True,
-            )
-            await message.channel.send("Source guild is not available to Jane right now.")
-            return True
-
-        pendingRole = sourceGuild.get_role(pendingRoleIdInt)
-        if pendingRole is None:
-            await progress.update(
-                stepIndex=1,
-                detail="Pending Background Check role could not be found in the source server.",
-                failed=True,
-            )
-            await message.channel.send("Pending Background Check role could not be found in the source server.")
-            return True
-
-        try:
-            pendingMembers = await runtimeBgQueueCommand.collectPendingMembers(
-                sourceGuild,
-                pendingRole,
-                pendingRoleIdInt,
-                progress,
-            )
-            if not pendingMembers:
-                await progress.update(
-                    stepIndex=2,
-                    detail="No members currently have the Pending Background Check role.",
-                    pendingCount=0,
-                    failed=True,
-                )
-                await message.channel.send("No members currently have the Pending Background Check role.")
-                return True
-
-            await progress.update(
-                stepIndex=3,
-                detail="Creating the BG queue session and attendee list...",
-                pendingCount=len(pendingMembers),
-            )
-
-            bgQueueChannel = await runtimeBgQueueCommand.resolveBgQueueChannel(
-                self.botClient,
-                self.config,
-                message.channel,
-            )
-            if bgQueueChannel is None:
-                await progress.update(
-                    stepIndex=3,
-                    detail="BG queue channel is not configured or inaccessible.",
-                    pendingCount=len(pendingMembers),
-                    failed=True,
-                )
-                await message.channel.send("BG queue channel is not configured or inaccessible.")
-                return True
-
-            if message.guild.me and message.channel.permissions_for(message.guild.me).manage_messages:
-                try:
-                    await message.delete()
-                except Exception:
-                    pass
-
-            sessionId = await self.sessionService.createSession(
-                guildId=int(sourceGuild.id),
-                channelId=int(bgQueueChannel.id),
-                messageId=int(message.id),
-                sessionType="bg-check",
-                hostId=int(message.author.id),
-                password=os.urandom(8).hex(),
-            )
-            attendeeUserIds = [int(member.id) for member in pendingMembers]
-            await self.sessionService.addAttendeesBulk(
-                int(sessionId),
-                attendeeUserIds,
-                examGrade="PASS",
-            )
-
-            await progress.update(
-                stepIndex=4,
-                detail=f"Posting the queue panel in <#{bgQueueChannel.id}>...",
-                pendingCount=len(pendingMembers),
-            )
-            await self.sessionViews.postBgQueue(self.botClient, sessionId, sourceGuild)
-            await progress.update(
-                stepIndex=5,
-                detail=(
-                    f"Background-check queue created for `{len(pendingMembers)}` member(s) "
-                    f"in <#{bgQueueChannel.id}>.\n"
-                    "Initial Roblox flag scans will continue in the background."
-                ),
-                pendingCount=len(pendingMembers),
-                finished=True,
-            )
-        except Exception as exc:
-            await progress.update(
-                stepIndex=5,
-                detail=f"Queue creation failed: `{exc.__class__.__name__}`",
-                pendingCount=None,
-                failed=True,
-            )
-            raise
-
+        if not ok:
+            await message.channel.send(response)
         return True
 
     async def handleBgLeaderboardCommand(self, message: discord.Message) -> bool:

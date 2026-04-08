@@ -9,6 +9,7 @@ import discord
 from discord.ext import commands
 
 import config
+from runtime import webhooks as runtimeWebhooks
 from silly import hallService
 
 log = logging.getLogger(__name__)
@@ -336,63 +337,24 @@ class HallCog(commands.Cog):
 
         useWebhook = bool(getattr(config, "hallUseWebhook", True))
         if useWebhook and isinstance(targetChannel, discord.TextChannel):
-            me = targetChannel.guild.me
-            if me and targetChannel.permissions_for(me).manage_webhooks:
-                try:
-                    webhooks = await targetChannel.webhooks()
-                    webhook = next(
-                        (
-                            hook
-                            for hook in webhooks
-                            if hook.user and self.bot.user and int(hook.user.id) == int(self.bot.user.id) and hook.name == hallTitle
-                        ),
-                        None,
-                    )
-                    if webhook is None:
-                        webhook = await targetChannel.create_webhook(
-                            name=hallTitle,
-                            reason="Hall repost output",
-                        )
-                    sent = await webhook.send(
-                        content=headerLine,
-                        embed=embed,
-                        username=hallTitle,
-                        avatar_url=self.bot.user.display_avatar.url if self.bot.user else discord.utils.MISSING,
-                        wait=True,
-                    )
-                    return int(sent.id)
-                except Exception:
-                    log.exception("Hall repost webhook send failed for %s.", hallTitle)
+            sent = await runtimeWebhooks.sendOwnedWebhookMessageDetailed(
+                botClient=self.bot,
+                channel=targetChannel,
+                webhookName=hallTitle,
+                content=headerLine,
+                embed=embed,
+                username=hallTitle,
+                avatarUrl=self.bot.user.display_avatar.url if self.bot.user else None,
+                reason="Hall repost output",
+            )
+            if sent is not None:
+                return int(sent.id)
 
         try:
             sent = await targetChannel.send(content=headerLine, embed=embed)
         except (discord.Forbidden, discord.NotFound, discord.HTTPException):
             return None
         return int(sent.id)
-
-    async def _findOwnedHallWebhook(
-        self,
-        targetChannel: object,
-        *,
-        hallTitle: str,
-    ) -> Optional[discord.Webhook]:
-        if not isinstance(targetChannel, discord.TextChannel):
-            return None
-        me = targetChannel.guild.me
-        if me is None or not targetChannel.permissions_for(me).manage_webhooks:
-            return None
-        try:
-            webhooks = await targetChannel.webhooks()
-        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-            return None
-        return next(
-            (
-                hook
-                for hook in webhooks
-                if hook.user and self.bot.user and int(hook.user.id) == int(self.bot.user.id) and hook.name == hallTitle and bool(hook.token)
-            ),
-            None,
-        )
 
     async def _findExistingHallPostMessage(
         self,
@@ -515,16 +477,15 @@ class HallCog(commands.Cog):
             return False
         except (discord.Forbidden, discord.HTTPException):
             hallTitle = _hallTitleFromType(hallType)
-            webhook = await self._findOwnedHallWebhook(targetChannel, hallTitle=hallTitle)
-            if webhook is None:
-                # Keep the record; we just couldn't edit right now.
-                return True
-            try:
-                await webhook.edit_message(int(postedMessageId), content=headerLine)
-            except discord.NotFound:
+            edited = await runtimeWebhooks.editOwnedWebhookMessage(
+                botClient=self.bot,
+                message=postedMessage,
+                webhookName=hallTitle,
+                content=headerLine,
+                reason="Hall repost count update",
+            )
+            if not edited:
                 return False
-            except (discord.Forbidden, discord.HTTPException):
-                return True
         return True
 
     async def _handleHallReactionEvent(

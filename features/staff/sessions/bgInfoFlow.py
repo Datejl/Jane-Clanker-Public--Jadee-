@@ -5,6 +5,7 @@ from typing import Any, Awaitable, Callable, Optional
 import discord
 from discord import ui
 
+from features.staff.sessions import bgBuckets
 from features.staff.sessions.favoriteGamesView import FavoriteGamesPageView
 
 
@@ -16,6 +17,7 @@ class BgInfoActionsView(ui.View):
         viewerId: int,
         robloxUserId: Optional[int],
         robloxUsername: Optional[str],
+        reviewBucket: str,
         *,
         configModule: Any,
         serviceModule: Any,
@@ -30,12 +32,15 @@ class BgInfoActionsView(ui.View):
         self.viewerId = int(viewerId)
         self.robloxUserId = robloxUserId
         self.robloxUsername = robloxUsername
+        self.reviewBucket = bgBuckets.normalizeBgReviewBucket(reviewBucket)
         self.config = configModule
         self.service = serviceModule
         self.roblox = robloxModule
         self.safeInteractionReply = safeInteractionReply
         self.safeInteractionDefer = safeInteractionDefer
         self.requireModPermission = requireModPermission
+        if self.reviewBucket == bgBuckets.minorBgReviewBucket:
+            self.remove_item(self.favoritedGamesBtn)
 
     async def _guard(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.viewerId:
@@ -157,6 +162,7 @@ async def sendBgInfoForTarget(
     sessionId: int,
     targetUserId: int,
     *,
+    reviewBucket: str = bgBuckets.adultBgReviewBucket,
     configModule: Any,
     serviceModule: Any,
     safeInteractionDefer: Callable[..., Awaitable[bool]],
@@ -169,10 +175,11 @@ async def sendBgInfoForTarget(
     scanRobloxBadgesForAttendee: Callable[..., Awaitable[bool]],
     sendInventoryPrivateDm: Callable[..., Awaitable[None]],
     loadJsonList: Callable[[Any], list[dict[str, Any]]],
-    buildActionsView: Callable[[int, int, int, Optional[int], Optional[str]], ui.View],
+    buildActionsView: Callable[[int, int, int, Optional[int], Optional[str], str], ui.View],
 ) -> None:
     # oh my fucking god
     await safeInteractionDefer(interaction, ephemeral=True)
+    normalizedBucket = bgBuckets.normalizeBgReviewBucket(reviewBucket)
     attendees = bgCandidates(await serviceModule.getAttendees(sessionId))
     attendee = next((a for a in attendees if a["userId"] == targetUserId), None)
     if attendee is None:
@@ -183,7 +190,17 @@ async def sendBgInfoForTarget(
         )
         return
 
-    guild = interaction.guild
+    session = await serviceModule.getSession(sessionId)
+    guild = None
+    if isinstance(session, dict):
+        try:
+            sessionGuildId = int(session.get("guildId") or 0)
+        except (TypeError, ValueError):
+            sessionGuildId = 0
+        if sessionGuildId > 0:
+            guild = interaction.client.get_guild(sessionGuildId)
+    if guild is None:
+        guild = interaction.guild
     member = guild.get_member(targetUserId) if guild else None
     if member is None and guild is not None:
         try:
@@ -194,6 +211,8 @@ async def sendBgInfoForTarget(
     nickname = member.nick if member and member.nick else "(none)"
     username = member.name if member else "(unknown)"
     mention = f"<@{targetUserId}>"
+    joinedAt = getattr(member, "joined_at", None)
+    createdAt = getattr(member, "created_at", None)
 
     (
         flagIds,
@@ -206,10 +225,10 @@ async def sendBgInfoForTarget(
         badgeNotes,
         accountAgeDays,
     ) = await loadFlagRules()
-    scanGroups = bool(flagIds or flagUsernames or groupKeywords or accountAgeDays > 0)
+    scanGroups = normalizedBucket == bgBuckets.adultBgReviewBucket and bool(flagIds or flagUsernames or groupKeywords or accountAgeDays > 0)
     # Always run inventory scan when enabled so we can determine public vs private,
     # even if there are no inventory-specific flag rules configured.
-    scanInventory = bool(getattr(configModule, "robloxInventoryScanEnabled", False))
+    scanInventory = normalizedBucket == bgBuckets.adultBgReviewBucket and bool(getattr(configModule, "robloxInventoryScanEnabled", False))
     scanBadges = bool(flagBadgeIds)
     identity: Optional[Any] = None
 
@@ -307,37 +326,44 @@ async def sendBgInfoForTarget(
     embed.add_field(name="Mention", value=mention, inline=False)
     embed.add_field(name="User ID", value=str(targetUserId), inline=False)
     embed.add_field(name="Username", value=username, inline=False)
+    if createdAt is not None:
+        embed.add_field(name="Discord Created", value=discord.utils.format_dt(createdAt, "f"), inline=False)
+    if joinedAt is not None:
+        embed.add_field(name="Joined Server", value=discord.utils.format_dt(joinedAt, "f"), inline=False)
     if robloxUserId:
-        robloxProfileUrl = f"https://www.roblox.com/users/{robloxUserId}/profile"
         robloxLabel = robloxUsername or str(robloxUserId)
-        embed.add_field(
-            name="Roblox Account",
-            value=f"[{robloxLabel}]({robloxProfileUrl})",
-            inline=False,
-        )
+        if normalizedBucket == bgBuckets.minorBgReviewBucket:
+            embed.add_field(name="Roblox Account", value=robloxLabel, inline=False)
+        else:
+            robloxProfileUrl = f"https://www.roblox.com/users/{robloxUserId}/profile"
+            embed.add_field(
+                name="Roblox Account",
+                value=f"[{robloxLabel}]({robloxProfileUrl})",
+                inline=False,
+            )
     elif robloxUsername:
         embed.add_field(name="Roblox Account", value=robloxUsername, inline=False)
     else:
         embed.add_field(name="Roblox Account", value="Not linked via RoVer.", inline=False)
-    if flaggedGroups:
+    if normalizedBucket == bgBuckets.adultBgReviewBucket and flaggedGroups:
         embed.add_field(
             name="Flagged Groups",
             value="\n".join(flaggedLines) if flaggedLines else "FLAGGED",
             inline=False,
         )
-    elif scanGroups:
+    elif normalizedBucket == bgBuckets.adultBgReviewBucket and scanGroups:
         embed.add_field(
             name="Flagged Groups",
             value="No flagged groups detected.",
             inline=False,
         )
-    if matchLines:
+    if normalizedBucket == bgBuckets.adultBgReviewBucket and matchLines:
         embed.add_field(
             name="Flag Matches",
             value="\n".join(matchLines),
             inline=False,
         )
-    if flaggedItems:
+    if normalizedBucket == bgBuckets.adultBgReviewBucket and flaggedItems:
         itemLines: list[str] = []
         for item in flaggedItems[:15]:
             if not isinstance(item, dict):
@@ -389,12 +415,12 @@ async def sendBgInfoForTarget(
             value="\n".join(badgeLines) if badgeLines else "FLAGGED",
             inline=False,
         )
-    if groupStatus and groupStatus != "OK":
+    if normalizedBucket == bgBuckets.adultBgReviewBucket and groupStatus and groupStatus != "OK":
         note = groupStatus
         if groupError:
             note = f"{groupStatus}: {groupError}"
         embed.add_field(name="Group Scan", value=note, inline=False)
-    if inventoryStatus and inventoryStatus != "OK":
+    if normalizedBucket == bgBuckets.adultBgReviewBucket and inventoryStatus and inventoryStatus != "OK":
         note = inventoryStatus
         if inventoryError:
             note = f"{inventoryStatus}: {inventoryError}"
@@ -421,6 +447,7 @@ async def sendBgInfoForTarget(
             interaction.user.id,
             robloxUserIdInt,
             robloxUsername,
+            normalizedBucket,
         ),
         ephemeral=True,
     )

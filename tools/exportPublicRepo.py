@@ -163,6 +163,10 @@ def _removePath(path: Path) -> None:
     path.unlink()
 
 
+def _shouldPreserveTargetEntryOnClean(path: Path) -> bool:
+    return path.name == ".git"
+
+
 def _prepareTarget(targetRoot: Path, *, clean: bool) -> None:
     if targetRoot == REPO_ROOT or REPO_ROOT in targetRoot.parents:
         raise ValueError("Target directory must be outside the source repository.")
@@ -172,6 +176,8 @@ def _prepareTarget(targetRoot: Path, *, clean: bool) -> None:
 
     if clean and targetRoot.exists():
         for child in targetRoot.iterdir():
+            if _shouldPreserveTargetEntryOnClean(child):
+                continue
             _removePath(child)
 
     targetRoot.mkdir(parents=True, exist_ok=True)
@@ -255,6 +261,8 @@ def _sanitizeExportedConfig(targetRoot: Path) -> None:
             source,
         )
     configPath.write_text(source, encoding="utf-8")
+
+
 
 
 def _writePrivateScaffoldFiles(targetRoot: Path) -> None:
@@ -379,12 +387,12 @@ def _buildParser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "target",
-        help="Directory to receive the sanitized export.",
+        help="Directory to receive the sanitized export. This can be a plain folder or a cloned public repo.",
     )
     parser.add_argument(
         "--clean",
         action="store_true",
-        help="Delete existing contents in the target directory before export.",
+        help="Delete existing contents in the target directory before export while preserving the target repo's .git directory.",
     )
     parser.add_argument(
         "--allow-findings",

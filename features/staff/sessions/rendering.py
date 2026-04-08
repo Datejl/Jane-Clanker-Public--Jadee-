@@ -1,45 +1,11 @@
 import discord
 from typing import Dict, List
+from features.staff.sessions.bgBuckets import adultBgReviewBucket, bgReviewBucketLabel, normalizeBgReviewBucket
+from runtime import webhooks as runtimeWebhooks
 
-_DISCORD_FIELD_VALUE_MAX = 1024
+_DISCORD_EMBED_FIELD_MAX = runtimeWebhooks.DISCORD_EMBED_FIELD_MAX
 _FLAG_CLEAR_EMOJI = "<:bg_clear:1463951975946256436>"
 _FLAG_HIT_EMOJI = ":no_entry:"
-
-
-def _buildCappedListFieldValue(
-    lines: List[str],
-    *,
-    emptyText: str = "None",
-    overflowNoun: str = "item(s)",
-) -> str:
-    if not lines:
-        return emptyText
-
-    keptLines: list[str] = []
-    currentLen = 0
-    for idx, line in enumerate(lines):
-        lineText = str(line)
-        if len(lineText) > _DISCORD_FIELD_VALUE_MAX:
-            lineText = lineText[: _DISCORD_FIELD_VALUE_MAX - 3] + "..."
-
-        addLen = len(lineText) + (1 if keptLines else 0)
-        if currentLen + addLen <= _DISCORD_FIELD_VALUE_MAX:
-            keptLines.append(lineText)
-            currentLen += addLen
-            continue
-
-        remaining = len(lines) - idx
-        suffix = f"\n... and {remaining} more {overflowNoun}."
-        while keptLines and (len("\n".join(keptLines)) + len(suffix)) > _DISCORD_FIELD_VALUE_MAX:
-            keptLines.pop()
-            remaining += 1
-            suffix = f"\n... and {remaining} more {overflowNoun}."
-
-        if not keptLines:
-            return f"... and {remaining} more {overflowNoun}."
-        return "\n".join(keptLines) + suffix
-
-    return "\n".join(keptLines)
 
 
 def gradeIcon(grade: str) -> str:
@@ -80,6 +46,13 @@ def inventoryReviewIcon(status: str | None) -> str:
     return ":x:"
 
 
+def badgeReviewIcon(status: str | None) -> str:
+    normalized = str(status or "").strip().upper()
+    if normalized == "OK":
+        return ":white_check_mark:"
+    return ":x:"
+
+
 def _isFlagged(flagged: object) -> bool:
     if flagged is None:
         return False
@@ -103,6 +76,11 @@ def _bgQueueInventoryText(status: str | None) -> str:
     # Treat all non-OK states (PRIVATE, ERROR, NO_ROVER, unknown) as not-clear.
     icon = ":white_check_mark:" if status == "OK" else ":x:"
     return f"Inventory {icon}"
+
+
+def _bgQueueBadgeText(status: str | None) -> str:
+    icon = ":white_check_mark:" if str(status or "").strip().upper() == "OK" else ":x:"
+    return f"Badges {icon}"
 
 
 def _bgQueueBgText(bgStatus: str | None) -> str:
@@ -136,11 +114,16 @@ def buildSessionEmbed(
             userLine += f"  -  {bgIcon(attendee['bgStatus'])}"
         lines.append(userLine)
 
-    embed.add_field(
-        name=f"Attendees ({len(attendees)})",
-        value=_buildCappedListFieldValue(lines, overflowNoun="attendee(s)"),
-        inline=False,
+    remainingFieldSlots = max(1, _DISCORD_EMBED_FIELD_MAX - len(embed.fields))
+    attendeeChunks = runtimeWebhooks.buildEmbedFieldChunks(
+        lines,
+        emptyText="None",
+        overflowNoun="attendee(s)",
+        maxChunks=remainingFieldSlots,
     )
+    for idx, chunk in enumerate(attendeeChunks, start=1):
+        fieldName = f"Attendees ({len(attendees)})" if idx == 1 else f"Attendees ({idx}/{len(attendeeChunks)})"
+        embed.add_field(name=fieldName, value=chunk, inline=False)
 
     status = session["status"]
     embed.set_footer(text=f"Status: {status}")
@@ -167,11 +150,18 @@ def buildGradingEmbed(
 def buildBgQueueEmbed(
     session: Dict,
     attendees: List[Dict],
+    *,
+    reviewBucket: str = adultBgReviewBucket,
     claimsByUserId: Dict[int, int] | None = None,
 ) -> discord.Embed:
+    normalizedBucket = normalizeBgReviewBucket(reviewBucket)
     embed = discord.Embed(
-        title="Background Check Queue",
-        description="Use queue controls below to open attendee review panels.\n`Inventory  |  BG`",
+        title=f"Background Check Queue ({bgReviewBucketLabel(normalizedBucket)})",
+        description=(
+            "Use queue controls below to open attendee review panels.\n`Badges  |  BG`"
+            if normalizedBucket != adultBgReviewBucket
+            else "Use queue controls below to open attendee review panels.\n`Inventory  |  BG`"
+        ),
     )
     lines = []
     for i, attendee in enumerate(attendees, start=1):
@@ -181,20 +171,29 @@ def buildBgQueueEmbed(
             claimOwnerId = claimsByUserId.get(userId)
         headerLine = f"{i}. <@{userId}>"
         statusParts = [
-            _bgQueueInventoryText(attendee.get("robloxInventoryScanStatus")),
+            (
+                _bgQueueBadgeText(attendee.get("robloxBadgeScanStatus"))
+                if normalizedBucket != adultBgReviewBucket
+                else _bgQueueInventoryText(attendee.get("robloxInventoryScanStatus"))
+            ),
             _bgQueueBgText(attendee.get("bgStatus")),
         ]
-        if _isFlagged(attendee.get("robloxFlagged")):
+        if normalizedBucket == adultBgReviewBucket and _isFlagged(attendee.get("robloxFlagged")):
             statusParts.append(_bgQueueFlaggedText(attendee.get("robloxFlagged")))
         statusLine = f"   {'  |  '.join(statusParts)}"
         if claimOwnerId:
             lines.append(f"{headerLine}\n{statusLine}\n   Claimed <@{claimOwnerId}>")
         else:
             lines.append(f"{headerLine}\n{statusLine}")
-    embed.add_field(
-        name=f"People ({len(attendees)})",
-        value=_buildCappedListFieldValue(lines, overflowNoun="attendee(s)"),
-        inline=False,
+    remainingFieldSlots = max(1, _DISCORD_EMBED_FIELD_MAX - len(embed.fields))
+    peopleChunks = runtimeWebhooks.buildEmbedFieldChunks(
+        lines,
+        emptyText="None",
+        overflowNoun="attendee(s)",
+        maxChunks=remainingFieldSlots,
     )
+    for idx, chunk in enumerate(peopleChunks, start=1):
+        fieldName = f"People ({len(attendees)})" if idx == 1 else f"People ({idx}/{len(peopleChunks)})"
+        embed.add_field(name=fieldName, value=chunk, inline=False)
     embed.set_footer(text="Mods: open attendee panels to approve/reject. Queue auto-reposts every 5 minutes.")
     return embed

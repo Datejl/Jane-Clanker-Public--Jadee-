@@ -131,6 +131,10 @@ def slashPermissionHint(path: str) -> str:
             f"({runtimePermissions.formatRoleIds(groupPatrolHostRoles)})"
             + (" with recruiter fallback." if groupPatrolHostRoles else ".")
         ),
+        "/bg-check": (
+            "BG-certified roles required "
+            f"({runtimePermissions.formatRoleIds(sorted(runtimePermissions.getBgCheckCertifiedRoleIds()))})."
+        ),
         "/bg-flag": f"Moderator role required ({runtimePermissions.formatRoleIds([bgModRoleId] if bgModRoleId > 0 else [])}).",
         "/orbat-request": (
             "Requires ORBAT submitter or reviewer roles "
@@ -241,11 +245,6 @@ def hiddenCommandHelpEntries() -> list[tuple[str, str, str]]:
                 "Guild owner, manage-server, administrator, or cohost roles "
                 f"({runtimePermissions.formatRoleIds(cohostRoles)})."
             ),
-        ),
-        (
-            "?bgcheck / ?bg-check",
-            "Create a BG-check queue from users with the pending BG role.",
-            f"BG-certified roles required ({runtimePermissions.formatRoleIds(bgRoles)}).",
         ),
         (
             "?bgleaderboard / ?bg-leaderboard",

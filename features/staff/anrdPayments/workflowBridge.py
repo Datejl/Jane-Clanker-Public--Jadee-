@@ -1,6 +1,5 @@
 ﻿from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any, Optional
 
 from features.staff.workflows import rendering as workflowRendering
@@ -109,15 +108,7 @@ async def getPaymentWorkflowHistorySummary(requestRow: dict[str, Any], *, limit:
     rows = await workflowService.listRunEvents(int(run["runId"]), limit=max(1, min(int(limit or 3), 5)))
     if not rows:
         return ""
-    lines: list[str] = []
-    for row in reversed(rows):
-        toLabel = str(row.get("toStateLabel") or row.get("toStateKey") or "Unknown").strip()
-        actorId = int(row.get("actorId") or 0)
-        actorText = f"<@{actorId}>" if actorId > 0 else "system"
-        note = str(row.get("note") or "").strip()
-        transitionText = f"{toLabel} - {note}" if note else toLabel
-        lines.append(f"{_discordTimestamp(row.get('createdAt'))}: {transitionText} ({actorText})")
-    return "\n".join(lines)[:1024]
+    return workflowRendering.buildWorkflowEventSummary(rows)
 
 
 async def reconcilePaymentWorkflowRows(rows: list[dict[str, Any]]) -> tuple[int, int]:
@@ -145,24 +136,6 @@ async def reconcilePaymentWorkflowRows(rows: list[dict[str, Any]]) -> tuple[int,
         if existingRun is None or afterUpdatedAt != beforeUpdatedAt:
             changed += 1
     return checked, changed
-
-
-def _discordTimestamp(rawValue: Any) -> str:
-    text = str(rawValue or "").strip()
-    if not text:
-        return "unknown"
-    try:
-        parsed = datetime.fromisoformat(text)
-    except ValueError:
-        try:
-            parsed = datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
-        except ValueError:
-            return "unknown"
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    parsed = parsed.astimezone(timezone.utc)
-    return f"<t:{int(parsed.timestamp())}:R>"
-
 
 __all__ = [
     "ensurePaymentWorkflowCurrent",

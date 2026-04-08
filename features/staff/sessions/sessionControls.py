@@ -5,6 +5,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 import discord
 from discord import ui
+from features.staff.sessions import bgBuckets
 
 log = logging.getLogger(__name__)
 
@@ -74,6 +75,28 @@ def configure(
     _postOrientationResults = postOrientationResults
     _deleteSessionMessage = deleteSessionMessage
     _postBgQueue = postBgQueue
+
+
+async def _bgQueuePostingSummary(sessionId: int) -> tuple[int, int, bool, bool]:
+    session = await _service.getSession(sessionId)
+    attendees = await _service.getAttendees(sessionId)
+    adultCount = 0
+    minorCount = 0
+    for attendee in list(attendees or []):
+        if str(attendee.get("examGrade") or "").upper() != "PASS":
+            continue
+        reviewBucket = bgBuckets.normalizeBgReviewBucket(
+            attendee.get("bgReviewBucket"),
+            default=bgBuckets.adultBgReviewBucket,
+        )
+        if reviewBucket == bgBuckets.minorBgReviewBucket:
+            minorCount += 1
+        else:
+            adultCount += 1
+
+    adultPosted = adultCount <= 0 or int((session or {}).get("bgQueueMessageId") or 0) > 0
+    minorPosted = minorCount <= 0 or int((session or {}).get("bgQueueMinorMessageId") or 0) > 0
+    return adultCount, minorCount, adultPosted, minorPosted
 
 
 class JoinPasswordModal(ui.Modal, title="Enter Password"):
@@ -239,14 +262,46 @@ class SessionView(ui.View):
 
         await _safeInteractionDefer(interaction, ephemeral=True)
         try:
-            await _service.finishSession(sessionId)
             if session.get("sessionType") == "orientation":
-                await _postOrientationResults(interaction.client, sessionId)
-                await _deleteSessionMessage(interaction.client, sessionId)
-            else:
+                await _postBgQueue(interaction.client, sessionId, interaction.guild)
+                adultCount, minorCount, adultPosted, minorPosted = await _bgQueuePostingSummary(sessionId)
+                if adultPosted and minorPosted:
+                    await _postOrientationResults(interaction.client, sessionId)
+                    await _service.finishSession(sessionId)
+                    await _deleteSessionMessage(interaction.client, sessionId)
+                    await _safeInteractionReply(
+                        interaction,
+                        (
+                            "Finished. BG queues posted for moderation.\n"
+                            f"+18 routed: `{adultCount}`\n"
+                            f"-18 routed: `{minorCount}`"
+                        ),
+                        ephemeral=True,
+                    )
+                    return
                 await _updateSessionMessage(interaction.client, sessionId)
-
-            await _postBgQueue(interaction.client, sessionId, interaction.guild)
+                log.error(
+                    "Orientation session %s finished, but BG queue posting was incomplete (adultPosted=%s minorPosted=%s adultCount=%s minorCount=%s).",
+                    sessionId,
+                    adultPosted,
+                    minorPosted,
+                    adultCount,
+                    minorCount,
+                )
+                await _safeInteractionReply(
+                    interaction,
+                    (
+                        "Finished, but Jane could not post all BG queues correctly.\n"
+                        f"+18 routed: `{adultCount}` (`{'ok' if adultPosted else 'missing'}`)\n"
+                        f"-18 routed: `{minorCount}` (`{'ok' if minorPosted else 'missing'}`)\n"
+                        "Check the configured BG review channels."
+                    ),
+                    ephemeral=True,
+                )
+                return
+            else:
+                await _service.finishSession(sessionId)
+                await _updateSessionMessage(interaction.client, sessionId)
             await _safeInteractionReply(
                 interaction,
                 "Finished. BG checks posted for moderation.",

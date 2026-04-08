@@ -7,6 +7,7 @@ import discord
 
 import config
 from runtime import interaction as interactionRuntime
+from runtime import textFormatting as textFormattingRuntime
 from runtime import viewBases as runtimeViewBases
 from features.staff.ribbons import workflow as ribbonWorkflow
 
@@ -97,10 +98,7 @@ def _formatAssetNames(names: list[str], limit: int = 12) -> str:
 
 
 def _clipEmbedValue(value: str, limit: int = 1024) -> str:
-    text = str(value or "")
-    if len(text) <= limit:
-        return text
-    return text[: max(0, limit - 3)] + "..."
+    return textFormattingRuntime.clipText(value, limit)
 
 
 def _pageSlice(values: list[Any], pageIndex: int, pageSize: int = 25) -> tuple[list[Any], int]:

@@ -4,6 +4,7 @@ from discord import app_commands
 from features.staff.clockins import ClockinEngine, OrientationClockinAdapter
 from features.staff.sessions.views import SessionView, updateSessionMessage
 from runtime import interaction as interactionRuntime
+from runtime import permissions as runtimePermissions
 import config
 
 class SessionsCog(commands.Cog):
@@ -23,6 +24,9 @@ class SessionsCog(commands.Cog):
         if config.instructorRoleId is None:
             return True
         return any(r.id == config.instructorRoleId for r in member.roles)
+
+    def canStartBgCheckQueue(self, member: discord.Member) -> bool:
+        return runtimePermissions.hasBgCheckCertifiedRole(member)
 
     @app_commands.command(name="orientation", description="Start an orientation session.")
     @app_commands.describe(password="Password attendees must enter to join.")
@@ -71,6 +75,34 @@ class SessionsCog(commands.Cog):
         await updateSessionMessage(self.bot, int(sessionId))
 
         await self._safeEphemeral(interaction, f"Password: ||{password}||")
+
+    @app_commands.command(name="bg-check", description="Create a background-check queue from pending users.")
+    @app_commands.guild_only()
+    async def bgCheck(self, interaction: discord.Interaction):
+        if not interaction.guild or not interaction.channel:
+            return await self._safeEphemeral(interaction, "This command can only be used inside a server channel.")
+        if not isinstance(interaction.user, discord.Member):
+            return await self._safeEphemeral(interaction, "This command can only be used inside a server channel.")
+        if not self.canStartBgCheckQueue(interaction.user):
+            return await self._safeEphemeral(interaction, "You do not have permission to start background-check queues.")
+
+        runtimeServices = getattr(self.bot, "runtimeServices", {}) or {}
+        createBgCheckQueue = runtimeServices.get("createBgCheckQueue")
+        if not callable(createBgCheckQueue):
+            return await self._safeEphemeral(interaction, "Background-check queue creation is unavailable on this build.")
+
+        await interactionRuntime.safeInteractionDefer(
+            interaction,
+            ephemeral=True,
+            thinking=True,
+        )
+        ok, response = await createBgCheckQueue(
+            guild=interaction.guild,
+            channel=interaction.channel,
+            actor=interaction.user,
+            sourceMessage=None,
+        )
+        await self._safeEphemeral(interaction, response)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(SessionsCog(bot))

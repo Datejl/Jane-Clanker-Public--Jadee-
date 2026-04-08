@@ -6,6 +6,7 @@ import tempfile
 from typing import Any, Optional
 
 import discord
+from features.staff.sessions import bgBuckets
 
 _deps: dict[str, Any] = {}
 
@@ -25,10 +26,13 @@ def _buildQueueEmbedAndView(
     sessionId: int,
     session: dict[str, Any],
     attendees: list[dict[str, Any]],
+    *,
+    reviewBucket: str,
 ) -> tuple[discord.Embed, discord.ui.View]:
     embed = _dep("buildBgQueueEmbed")(
         session,
         attendees,
+        reviewBucket=reviewBucket,
         claimsByUserId=_dep("getBgClaimsForSession")(sessionId),
     )
     view = _dep("buildBgQueueMainView")(sessionId, attendees)
@@ -68,33 +72,42 @@ async def _recoverMissingQueueMessage(
     *,
     previousMessageId: int,
     attendees: list[dict[str, Any]],
+    reviewBucket: str,
 ) -> None:
     latestSession = await _dep("service").getSession(sessionId)
-    latestMessageId = int((latestSession or {}).get("bgQueueMessageId") or 0)
+    latestMessageId = _messageIdForBucket(latestSession or {}, reviewBucket)
     if latestMessageId > 0 and latestMessageId != int(previousMessageId):
         await _dep("requestBgQueueMessageUpdate")(bot, sessionId, delaySec=0)
         return
     if attendees and not _dep("isBgQueueComplete")(attendees):
-        await repostBgQueueMessage(bot, sessionId)
+        await repostBgQueueMessage(bot, sessionId, reviewBucket=reviewBucket)
 
 
-def bgQueueChannelCandidateIds(session: dict[str, Any]) -> list[int]:
+def bgQueueChannelCandidateIds(session: dict[str, Any], reviewBucket: str = bgBuckets.adultBgReviewBucket) -> list[int]:
     candidateIds: list[int] = []
-    sessionType = str(session.get("sessionType") or "").strip().lower()
-
-    try:
-        sessionChannelId = int(session.get("channelId") or 0)
-    except (TypeError, ValueError):
-        sessionChannelId = 0
+    normalizedBucket = bgBuckets.normalizeBgReviewBucket(reviewBucket)
 
     try:
         configuredChannelId = int(getattr(_dep("configModule"), "bgCheckChannelId", 0) or 0)
     except (TypeError, ValueError):
         configuredChannelId = 0
+    try:
+        configuredAdultChannelId = int(getattr(_dep("configModule"), "bgCheckAdultReviewChannelId", 0) or 0)
+    except (TypeError, ValueError):
+        configuredAdultChannelId = 0
+    try:
+        configuredMinorChannelId = int(getattr(_dep("configModule"), "bgCheckMinorReviewChannelId", 0) or 0)
+    except (TypeError, ValueError):
+        configuredMinorChannelId = 0
 
-    # Orientation queues should prefer the configured BG review channel.
-    # Manual ?bgCheck queues should prefer the channel where the command was run.
-    preferredIds = [configuredChannelId, sessionChannelId] if sessionType == "orientation" else [sessionChannelId, configuredChannelId]
+    # BG review should stay in the dedicated review channels. Falling back to the
+    # original session channel can leak the split review flow back into the source
+    # server, which is exactly what the adult/minor separation is trying to avoid.
+    if normalizedBucket == bgBuckets.minorBgReviewBucket:
+        preferredIds = [configuredMinorChannelId]
+    else:
+        effectiveConfiguredChannelId = configuredAdultChannelId or configuredChannelId
+        preferredIds = [effectiveConfiguredChannelId]
     for channelId in preferredIds:
         if channelId > 0 and channelId not in candidateIds:
             candidateIds.append(channelId)
@@ -104,8 +117,9 @@ def bgQueueChannelCandidateIds(session: dict[str, Any]) -> list[int]:
 async def resolveBgQueueChannelForSession(
     bot: discord.Client,
     session: dict[str, Any],
+    reviewBucket: str = bgBuckets.adultBgReviewBucket,
 ) -> Optional[discord.abc.Messageable]:
-    for channelId in bgQueueChannelCandidateIds(session):
+    for channelId in bgQueueChannelCandidateIds(session, reviewBucket):
         channel = await _dep("getCachedChannel")(bot, channelId)
         if isinstance(channel, (discord.TextChannel, discord.Thread)):
             return channel
@@ -116,12 +130,13 @@ async def fetchBgQueueMessageForSession(
     bot: discord.Client,
     session: dict[str, Any],
     messageId: int,
+    reviewBucket: str = bgBuckets.adultBgReviewBucket,
 ) -> tuple[Optional[discord.abc.Messageable], Optional[discord.Message]]:
     targetMessageId = int(messageId or 0)
     if targetMessageId <= 0:
         return None, None
 
-    for channelId in bgQueueChannelCandidateIds(session):
+    for channelId in bgQueueChannelCandidateIds(session, reviewBucket):
         channel = await _dep("getCachedChannel")(bot, channelId)
         if not isinstance(channel, (discord.TextChannel, discord.Thread)):
             continue
@@ -131,6 +146,31 @@ async def fetchBgQueueMessageForSession(
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             continue
     return None, None
+
+
+def _messageIdForBucket(session: dict[str, Any], reviewBucket: str) -> int:
+    normalizedBucket = bgBuckets.normalizeBgReviewBucket(reviewBucket)
+    if normalizedBucket == bgBuckets.minorBgReviewBucket:
+        return int(session.get("bgQueueMinorMessageId") or 0)
+    return int(session.get("bgQueueMessageId") or 0)
+
+
+def _activeQueueBuckets(attendees: list[dict[str, Any]]) -> list[str]:
+    buckets: list[str] = []
+    if _dep("bgCandidates")(attendees, bgBuckets.adultBgReviewBucket):
+        buckets.append(bgBuckets.adultBgReviewBucket)
+    if _dep("bgCandidates")(attendees, bgBuckets.minorBgReviewBucket):
+        buckets.append(bgBuckets.minorBgReviewBucket)
+    return buckets
+
+
+def _pendingQueueBuckets(attendees: list[dict[str, Any]]) -> list[str]:
+    buckets: list[str] = []
+    for reviewBucket in _activeQueueBuckets(attendees):
+        bucketAttendees = _dep("bgCandidates")(attendees, reviewBucket)
+        if bucketAttendees and not _dep("isBgQueueComplete")(bucketAttendees):
+            buckets.append(reviewBucket)
+    return buckets
 
 
 async def postBgFinalSummary(bot: discord.Client, sessionId: int) -> None:
@@ -168,10 +208,6 @@ async def postBgFinalSummary(bot: discord.Client, sessionId: int) -> None:
     if not approved and not rejected and not pending:
         return
 
-    targetChannel = await resolveBgQueueChannelForSession(bot, session)
-    if not isinstance(targetChannel, (discord.TextChannel, discord.Thread)):
-        return
-
     summary = _dep("buildBgFinalSummaryText")(
         sessionId=int(sessionId),
         approvedUserIds=approved,
@@ -180,34 +216,43 @@ async def postBgFinalSummary(bot: discord.Client, sessionId: int) -> None:
         moderatorStatsLines=moderatorStatsLines,
     )
 
-    try:
-        if len(summary) <= 1900:
-            await targetChannel.send(
-                summary,
-                allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
-            )
-        else:
-            tempPath = ""
-            try:
-                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".txt", delete=False) as handle:
-                    handle.write(summary)
-                    tempPath = handle.name
+    sentChannelIds: set[int] = set()
+    for reviewBucket in _activeQueueBuckets(attendees) or [bgBuckets.adultBgReviewBucket]:
+        targetChannel = await resolveBgQueueChannelForSession(bot, session, reviewBucket)
+        if not isinstance(targetChannel, (discord.TextChannel, discord.Thread)):
+            continue
+        channelId = int(getattr(targetChannel, "id", 0) or 0)
+        if channelId <= 0 or channelId in sentChannelIds:
+            continue
+        try:
+            if len(summary) <= 1900:
                 await targetChannel.send(
-                    content=(
-                        "### BG Check Final Results\n"
-                        f"Session `{int(sessionId)}` summary is attached."
-                    ),
-                    file=discord.File(tempPath, filename=f"bg-final-results-session-{int(sessionId)}.txt"),
+                    summary,
                     allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
                 )
-            finally:
-                if tempPath:
-                    try:
-                        os.remove(tempPath)
-                    except OSError:
-                        pass
-    except (discord.Forbidden, discord.HTTPException):
-        return
+            else:
+                tempPath = ""
+                try:
+                    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".txt", delete=False) as handle:
+                        handle.write(summary)
+                        tempPath = handle.name
+                    await targetChannel.send(
+                        content=(
+                            "### BG Check Final Results\n"
+                            f"Session `{int(sessionId)}` summary is attached."
+                        ),
+                        file=discord.File(tempPath, filename=f"bg-final-results-session-{int(sessionId)}.txt"),
+                        allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
+                    )
+                finally:
+                    if tempPath:
+                        try:
+                            os.remove(tempPath)
+                        except OSError:
+                            pass
+            sentChannelIds.add(channelId)
+        except (discord.Forbidden, discord.HTTPException):
+            continue
 
     _dep("bgFinalSummaryPosted").add(int(sessionId))
 
@@ -216,17 +261,26 @@ async def closeBgQueueControls(
     bot: discord.Client,
     sessionId: int,
     *,
+    reviewBucket: str | None,
     clearMessageReference: bool,
 ) -> None:
     session = await _dep("service").getSession(sessionId)
     if not session:
         return
+    attendees = _dep("bgCandidates")(await _dep("service").getAttendees(sessionId))
 
-    messageId = int(session.get("bgQueueMessageId") or 0)
-    if messageId > 0:
-        _, queueMessage = await fetchBgQueueMessageForSession(bot, session, messageId)
+    targetBuckets = (
+        [bgBuckets.normalizeBgReviewBucket(reviewBucket)]
+        if reviewBucket is not None
+        else [bgBuckets.adultBgReviewBucket, bgBuckets.minorBgReviewBucket]
+    )
+    for bucket in targetBuckets:
+        messageId = _messageIdForBucket(session, bucket)
+        if messageId <= 0:
+            continue
+        _, queueMessage = await fetchBgQueueMessageForSession(bot, session, messageId, bucket)
         if queueMessage is not None:
-            view = _dep("bgQueueViewClass")(sessionId)
+            view = _dep("bgQueueViewClass")(sessionId, reviewBucket=bucket)
             for child in view.children:
                 child.disabled = True
             try:
@@ -234,108 +288,171 @@ async def closeBgQueueControls(
             except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                 pass
 
-    _dep("stopBgQueueRepostTask")(sessionId)
-    await postBgFinalSummary(bot, sessionId)
-    _dep("clearBgClaimsForSession")(sessionId)
+    if reviewBucket is None:
+        _dep("clearBgClaimsForSession")(sessionId)
+    else:
+        for attendee in _dep("bgCandidates")(attendees, reviewBucket):
+            try:
+                targetUserId = int(attendee.get("userId") or 0)
+            except (TypeError, ValueError):
+                targetUserId = 0
+            if targetUserId > 0:
+                _dep("clearBgClaim")(sessionId, targetUserId)
     if clearMessageReference:
-        await _dep("service").setBgQueueMessage(sessionId, 0)
+        for bucket in targetBuckets:
+            await _dep("service").setBgQueueMessage(sessionId, 0, reviewBucket=bucket)
+
+    refreshedSession = await _dep("service").getSession(sessionId)
+    remainingQueueMessageIds = [
+        _messageIdForBucket(refreshedSession or {}, bgBuckets.adultBgReviewBucket),
+        _messageIdForBucket(refreshedSession or {}, bgBuckets.minorBgReviewBucket),
+    ]
+    if _dep("isBgQueueComplete")(attendees) or not any(messageId > 0 for messageId in remainingQueueMessageIds):
+        _dep("stopBgQueueRepostTask")(sessionId)
     asyncio.create_task(_dep("reconcileRecruitmentOrientationBonusesForSessionSafe")(bot, sessionId))
 
 
-async def repostBgQueueMessage(bot: discord.Client, sessionId: int) -> bool:
+async def repostBgQueueMessage(
+    bot: discord.Client,
+    sessionId: int,
+    *,
+    reviewBucket: str | None = None,
+) -> bool:
     session = await _dep("service").getSession(sessionId)
     if not session:
         return False
-    oldMessageId = session.get("bgQueueMessageId")
-    if not oldMessageId:
-        return False
-
     attendees = _dep("bgCandidates")(await _dep("service").getAttendees(sessionId))
     if not attendees or _dep("isBgQueueComplete")(attendees):
         _dep("stopBgQueueRepostTask")(sessionId)
         return False
 
-    channel = await resolveBgQueueChannelForSession(bot, session)
-    if channel is None or not isinstance(channel, (discord.TextChannel, discord.Thread)):
-        return True
+    anySucceeded = False
+    targetBuckets = (
+        [bgBuckets.normalizeBgReviewBucket(reviewBucket)]
+        if reviewBucket is not None
+        else _pendingQueueBuckets(attendees)
+    )
+    for bucket in targetBuckets:
+        bucketAttendees = _dep("bgCandidates")(attendees, bucket)
+        if not bucketAttendees or _dep("isBgQueueComplete")(bucketAttendees):
+            continue
+        oldMessageId = _messageIdForBucket(session, bucket)
+        if oldMessageId <= 0:
+            continue
+        channel = await resolveBgQueueChannelForSession(bot, session, bucket)
+        if channel is None or not isinstance(channel, (discord.TextChannel, discord.Thread)):
+            continue
 
-    embed, view = _buildQueueEmbedAndView(sessionId, session, attendees)
+        embed, view = _buildQueueEmbedAndView(
+            sessionId,
+            session,
+            bucketAttendees,
+            reviewBucket=bucket,
+        )
 
-    try:
-        newMessage = await channel.send(embed=embed, view=view)
-    except (discord.Forbidden, discord.HTTPException):
-        return True
-
-    await _dep("service").setBgQueueMessage(sessionId, int(newMessage.id))
-    _, oldMessage = await fetchBgQueueMessageForSession(bot, session, int(oldMessageId))
-    if oldMessage is not None:
         try:
-            await oldMessage.delete()
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            pass
-    return True
+            newMessage = await channel.send(embed=embed, view=view)
+        except (discord.Forbidden, discord.HTTPException):
+            continue
+
+        await _dep("service").setBgQueueMessage(sessionId, int(newMessage.id), reviewBucket=bucket)
+        _, oldMessage = await fetchBgQueueMessageForSession(bot, session, int(oldMessageId), bucket)
+        if oldMessage is not None:
+            try:
+                await oldMessage.delete()
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                pass
+        anySucceeded = True
+    return anySucceeded
 
 
 async def updateBgQueueMessage(bot: discord.Client, sessionId: int) -> None:
     session = await _dep("service").getSession(sessionId)
     if not session:
         return
-    messageId = int(session.get("bgQueueMessageId") or 0)
-    if messageId <= 0:
-        return
 
-    _, msg = await fetchBgQueueMessageForSession(bot, session, messageId)
-    if msg is None:
-        return
-
+    attendees = _dep("bgCandidates")(await _dep("service").getAttendees(sessionId))
+    await _dep("ensureBgReviewBuckets")(bot, sessionId, bot.get_guild(int(session.get("guildId") or 0)))
     attendees = _dep("bgCandidates")(await _dep("service").getAttendees(sessionId))
     updated = await _dep("scanRobloxGroupsForAttendees")(sessionId, attendees, bot=bot)
     if updated:
         attendees = _dep("bgCandidates")(await _dep("service").getAttendees(sessionId))
 
-    embed, view = _buildQueueEmbedAndView(sessionId, session, attendees)
     _syncQueueRepostState(bot, sessionId, attendees)
-    try:
-        await msg.edit(embed=embed, view=view)
-    except discord.NotFound:
-        await _recoverMissingQueueMessage(
-            bot,
+    for reviewBucket in _activeQueueBuckets(attendees):
+        bucketAttendees = _dep("bgCandidates")(attendees, reviewBucket)
+        messageId = _messageIdForBucket(session, reviewBucket)
+        if messageId <= 0:
+            continue
+        _, msg = await fetchBgQueueMessageForSession(bot, session, messageId, reviewBucket)
+        if msg is None:
+            await _recoverMissingQueueMessage(
+                bot,
+                sessionId,
+                previousMessageId=messageId,
+                attendees=bucketAttendees,
+                reviewBucket=reviewBucket,
+            )
+            continue
+        embed, view = _buildQueueEmbedAndView(
             sessionId,
-            previousMessageId=messageId,
-            attendees=attendees,
+            session,
+            bucketAttendees,
+            reviewBucket=reviewBucket,
         )
-    except (discord.Forbidden, discord.HTTPException):
-        return
+        try:
+            await msg.edit(embed=embed, view=view)
+        except discord.NotFound:
+            await _recoverMissingQueueMessage(
+                bot,
+                sessionId,
+                previousMessageId=messageId,
+                attendees=bucketAttendees,
+                reviewBucket=reviewBucket,
+            )
+        except (discord.Forbidden, discord.HTTPException):
+            continue
 
 
 async def postBgQueue(bot: discord.Client, sessionId: int, guild: discord.Guild) -> None:
-    _ = guild
     session = await _dep("service").getSession(sessionId)
     if not session:
         return
+    await _dep("ensureBgReviewBuckets")(bot, sessionId, guild)
     attendees = _dep("bgCandidates")(await _dep("service").getAttendees(sessionId))
 
-    channel = await resolveBgQueueChannelForSession(bot, session)
-    if channel is None:
+    queueBuckets = _activeQueueBuckets(attendees)
+    if not queueBuckets:
         return
 
     _dep("clearBgClaimsForSession")(sessionId)
-    embed, view = _buildQueueEmbedAndView(sessionId, session, attendees)
-    reviewRoleIdInt = _dep("resolveBgQueuePingRoleId")(channel)
-    try:
-        await _sendQueueStartupAlert(
-            channel,
-            reviewRoleId=reviewRoleIdInt,
-            attendeeCount=len(attendees),
-        )
-        msg = await channel.send(
-            embed=embed,
-            view=view,
-        )
-    except (discord.Forbidden, discord.HTTPException):
-        return
+    for reviewBucket in queueBuckets:
+        bucketAttendees = _dep("bgCandidates")(attendees, reviewBucket)
+        channel = await resolveBgQueueChannelForSession(bot, session, reviewBucket)
+        if channel is None:
+            continue
 
-    await _dep("service").setBgQueueMessage(sessionId, msg.id)
+        embed, view = _buildQueueEmbedAndView(
+            sessionId,
+            session,
+            bucketAttendees,
+            reviewBucket=reviewBucket,
+        )
+        reviewRoleIdInt = _dep("resolveBgQueuePingRoleId")(channel)
+        try:
+            await _sendQueueStartupAlert(
+                channel,
+                reviewRoleId=reviewRoleIdInt,
+                attendeeCount=len(bucketAttendees),
+            )
+            msg = await channel.send(
+                embed=embed,
+                view=view,
+            )
+        except (discord.Forbidden, discord.HTTPException):
+            continue
+
+        await _dep("service").setBgQueueMessage(sessionId, msg.id, reviewBucket=reviewBucket)
     if attendees and not _dep("isBgQueueComplete")(attendees):
         _syncQueueRepostState(bot, sessionId, attendees)
         await _dep("requestBgQueueMessageUpdate")(bot, sessionId, delaySec=0)

@@ -6,6 +6,7 @@ from typing import Any
 
 import discord
 from discord import ui
+from features.staff.sessions import bgBuckets
 
 log = logging.getLogger(__name__)
 
@@ -23,23 +24,30 @@ def _dep(name: str) -> Any:
     return value
 
 
-async def _getBgCandidateByIndex(sessionId: int, index: int) -> dict[str, Any] | None:
-    attendees = _dep("bgCandidates")(await _dep("service").getAttendees(sessionId))
+async def _getBgCandidateByIndex(
+    sessionId: int,
+    index: int,
+    reviewBucket: str = bgBuckets.adultBgReviewBucket,
+) -> dict[str, Any] | None:
+    attendees = _dep("bgCandidates")(await _dep("service").getAttendees(sessionId), reviewBucket)
     if index < 1 or index > len(attendees):
         return None
     return attendees[index - 1]
 
 
 class BgCheckView(ui.View):
-    def __init__(self, sessionId: int, targetUserId: int):
+    def __init__(self, sessionId: int, targetUserId: int, *, reviewBucket: str = bgBuckets.adultBgReviewBucket):
         super().__init__(timeout=None)
         self.sessionId = int(sessionId)
         self.targetUserId = int(targetUserId)
+        self.reviewBucket = bgBuckets.normalizeBgReviewBucket(reviewBucket)
 
         self.approveBtn.custom_id = f"bg:approve:{sessionId}:{targetUserId}"
         self.rejectBtn.custom_id = f"bg:reject:{sessionId}:{targetUserId}"
         self.infoBtn.custom_id = f"bg:info:{sessionId}:{targetUserId}"
         self.outfitsBtn.custom_id = f"bg:outfits:{sessionId}:{targetUserId}"
+        if self.reviewBucket == bgBuckets.minorBgReviewBucket:
+            self.remove_item(self.outfitsBtn)
 
     @ui.button(label="Approve", style=discord.ButtonStyle.success)
     async def approveBtn(self, interaction: discord.Interaction, _: ui.Button):
@@ -62,7 +70,7 @@ class BgCheckView(ui.View):
             await _dep("service").awardHostPointIfEligible(self.sessionId, self.targetUserId)
         await _dep("safeInteractionReply")(interaction, f"Approved <@{self.targetUserId}>.", ephemeral=True)
         await _dep("updateSessionMessage")(interaction.client, self.sessionId)
-        await _dep("updateBgCheckMessage")(interaction, self.sessionId, self.targetUserId)
+        await _dep("updateBgCheckMessage")(interaction, self.sessionId, self.targetUserId, self.reviewBucket)
         await _dep("requestBgQueueMessageUpdate")(interaction.client, self.sessionId)
         await _dep("maybeNotifyBgComplete")(interaction, self.sessionId)
         asyncio.create_task(
@@ -112,7 +120,7 @@ class BgCheckView(ui.View):
             await _dep("setPendingBgRole")(sessionGuild, self.targetUserId, False)
         await _dep("safeInteractionReply")(interaction, f"Rejected <@{self.targetUserId}>.", ephemeral=True)
         await _dep("updateSessionMessage")(interaction.client, self.sessionId)
-        await _dep("updateBgCheckMessage")(interaction, self.sessionId, self.targetUserId)
+        await _dep("updateBgCheckMessage")(interaction, self.sessionId, self.targetUserId, self.reviewBucket)
         await _dep("requestBgQueueMessageUpdate")(interaction.client, self.sessionId)
         await _dep("maybeNotifyBgComplete")(interaction, self.sessionId)
 
@@ -121,7 +129,7 @@ class BgCheckView(ui.View):
         if not await _dep("requireModPermission")(interaction):
             return
         try:
-            await _dep("sendBgInfoForTarget")(interaction, self.sessionId, self.targetUserId)
+            await _dep("sendBgInfoForTarget")(interaction, self.sessionId, self.targetUserId, self.reviewBucket)
         except Exception:
             log.exception(
                 "Get Info failed for session %s attendee %s.",
@@ -148,9 +156,10 @@ class BgInfoModal(ui.Modal, title="Get Attendee Info"):
         required=True,
     )
 
-    def __init__(self, sessionId: int):
+    def __init__(self, sessionId: int, reviewBucket: str = bgBuckets.adultBgReviewBucket):
         super().__init__()
         self.sessionId = int(sessionId)
+        self.reviewBucket = bgBuckets.normalizeBgReviewBucket(reviewBucket)
 
     async def on_submit(self, interaction: discord.Interaction):
         if not await _dep("requireModPermission")(interaction):
@@ -166,7 +175,7 @@ class BgInfoModal(ui.Modal, title="Get Attendee Info"):
             )
             return
 
-        attendee = await _getBgCandidateByIndex(self.sessionId, index)
+        attendee = await _getBgCandidateByIndex(self.sessionId, index, self.reviewBucket)
         if attendee is None:
             await _dep("safeInteractionReply")(
                 interaction,
@@ -175,7 +184,7 @@ class BgInfoModal(ui.Modal, title="Get Attendee Info"):
             )
             return
         try:
-            await _dep("sendBgInfoForTarget")(interaction, self.sessionId, attendee["userId"])
+            await _dep("sendBgInfoForTarget")(interaction, self.sessionId, attendee["userId"], self.reviewBucket)
         except Exception:
             log.exception(
                 "Get Info modal failed for session %s attendee %s.",

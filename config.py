@@ -167,6 +167,16 @@ anrdFundingBenefactorsRoleId = 0
 
 # == Session / BG Check ==
 bgCheckChannelId = 0
+bgCheckAdultReviewGuildId = 0
+bgCheckAdultReviewChannelId = 0
+bgCheckMinorReviewGuildId = 0
+bgCheckMinorReviewChannelId = 0
+bgCheckMinorReviewRoleId = 0
+bgMinorAgeRoleIds = []
+bgMajorAgeRoleIds = []
+bgMinorAgeGroups = ["13-15", "16-17", "NO INFO"]
+bgAdultAgeGroups = ["18-20", "21+"]
+bgUnknownDefaultsToMinor = True
 # Source guild for ?bgcheck member collection (defaults to serverId when unset).
 bgCheckSourceGuildId = serverId
 trainingResultsChannelId = 0
@@ -703,10 +713,12 @@ gamblingPointsToDollarRate = 5  # 1 point => 5 anrobucks
 # == Automation / Logs ==
 automationReportChannelId = 0
 johnTrainingLogChannelId = 0
+trainingArchiveChannelId = johnTrainingLogChannelId
+trainingLogBackfillDays = 365
+trainingSummaryWebhookName = "Jane Training Summary"
 johnEventLogChannelId = 0
 johnClankerBotId = 0
 
 
 # == Hidden / Misc ==
 skinAllowedUserIds = []
-bunnyCertificationRoleId = 0

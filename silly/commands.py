@@ -11,6 +11,7 @@ from typing import Callable
 import discord
 
 import config
+from runtime import webhooks as runtimeWebhooks
 
 
 _skinMentionRegex = re.compile(r"^<@!?(\d+)>$")
@@ -315,52 +316,17 @@ async def _sendSkinWebhook(
 ) -> bool:
     if not message.guild or not botClient.user:
         return False
-
-    channel = message.channel
-    thread = channel if isinstance(channel, discord.Thread) else None
-    webhookHostChannel = channel.parent if isinstance(channel, discord.Thread) else channel
-    if not isinstance(webhookHostChannel, discord.TextChannel):
-        return False
-
-    me = message.guild.me
-    if me is None:
-        return False
-    perms = webhookHostChannel.permissions_for(me)
-    if not perms.manage_webhooks:
-        return False
-
-    try:
-        webhooks = await webhookHostChannel.webhooks()
-        webhook = next(
-            (
-                hook
-                for hook in webhooks
-                if hook.user and hook.user.id == botClient.user.id and hook.name == "Jane Skinner"
-            ),
-            None,
-        )
-        if webhook is None:
-            webhook = await webhookHostChannel.create_webhook(
-                name="Jane Skinner",
-                reason="Skin command output",
-            )
-
-        kwargs = {
-            "username": "Jane Skinner",
-            "avatar_url": botClient.user.display_avatar.url,
-            "wait": True,
-        }
-        if content is not None:
-            kwargs["content"] = content
-        if embed is not None:
-            kwargs["embed"] = embed
-        if thread is not None:
-            kwargs["thread"] = thread
-        await webhook.send(**kwargs)
-        return True
-    except Exception:
-        logging.exception("Failed to send skin webhook message.")
-        return False
+    sentMessage = await runtimeWebhooks.sendOwnedWebhookMessageDetailed(
+        botClient=botClient,
+        channel=message.channel,
+        webhookName="Jane Skinner",
+        content=content,
+        embed=embed,
+        username="Jane Skinner",
+        avatarUrl=botClient.user.display_avatar.url,
+        reason="Skin command output",
+    )
+    return sentMessage is not None
 
 
 async def handleSkinCommand(

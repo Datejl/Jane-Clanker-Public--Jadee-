@@ -8,11 +8,14 @@ from discord import ui
 
 import config
 from features.staff.bgflags import service as flagService
+from features.staff.orbat import sheets as orbatSheets
 from runtime import interaction as interactionRuntime
 from runtime import taskBudgeter
 from features.staff.sessions import (
+    bgBuckets,
     bgCheckViews,
     bgInfoFlow,
+    bgRouting,
     bgOutfitsFlow,
     bgQueueViews,
     bgQueueMessaging,
@@ -32,6 +35,7 @@ from features.staff.sessions.outfitEmbeds import (
 )
 from features.staff.sessions.outfitViews import OutfitPageView
 from features.staff.sessions.rendering import (
+    badgeReviewIcon,
     buildSessionEmbed,
     buildGradingEmbed,
     buildBgQueueEmbed,
@@ -193,6 +197,63 @@ async def _getCachedChannel(
     _cachedChannelsById[key] = (datetime.utcnow(), channel)
     _pruneCacheBySize(_cachedChannelsById)
     return channel
+
+
+async def _resolveOrbatAgeGroupForUser(userId: int) -> str:
+    if orbatSheets is None or not hasattr(orbatSheets, "getOrbatEntry"):
+        return ""
+    try:
+        entry = await taskBudgeter.runSheetsThread(orbatSheets.getOrbatEntry, int(userId))
+    except Exception:
+        log.exception("Failed to resolve ORBAT age group for user %s during BGC routing.", userId)
+        return ""
+    if not isinstance(entry, dict):
+        return ""
+    return str(entry.get("ageGroup") or "").strip()
+
+
+async def ensureBgReviewBuckets(
+    bot: discord.Client,
+    sessionId: int,
+    sourceGuild: Optional[discord.Guild],
+) -> dict[str, int]:
+    attendees = _bgCandidates(await service.getAttendees(sessionId))
+    if not attendees:
+        return {
+            bgBuckets.adultBgReviewBucket: 0,
+            bgBuckets.minorBgReviewBucket: 0,
+            "updated": 0,
+        }
+
+    reviewBucketsByUserId: dict[int, str] = {}
+    bucketCounts = {
+        bgBuckets.adultBgReviewBucket: 0,
+        bgBuckets.minorBgReviewBucket: 0,
+    }
+
+    for attendee in attendees:
+        userId = int(attendee["userId"])
+        storedBucket = str(attendee.get("bgReviewBucket") or "").strip()
+        if storedBucket:
+            bucket = bgBuckets.normalizeBgReviewBucket(storedBucket)
+        else:
+            member = None
+            if sourceGuild is not None:
+                member = sourceGuild.get_member(userId)
+            bucket, _ = await bgRouting.classifyBgReviewBucketForMember(
+                member,
+                configModule=config,
+                resolveOrbatAgeGroup=_resolveOrbatAgeGroupForUser,
+                userId=userId,
+            )
+            reviewBucketsByUserId[userId] = bucket
+        bucketCounts[bucket] = bucketCounts.get(bucket, 0) + 1
+
+    if reviewBucketsByUserId:
+        await service.setBgReviewBucketsBulk(sessionId, reviewBucketsByUserId)
+
+    bucketCounts["updated"] = len(reviewBucketsByUserId)
+    return bucketCounts
 
 
 def getBgClaimOwnerId(sessionId: int, userId: int) -> Optional[int]:
@@ -378,14 +439,29 @@ async def restorePersistentViews(bot: discord.Client) -> dict[str, int]:
             except Exception:
                 log.exception("Failed to restore SessionView for session %s.", sessionId)
 
-        bgQueueMessageId = session.get("bgQueueMessageId")
-        if bgQueueMessageId:
+        bgQueueMessageIds = [
+            int(session.get("bgQueueMessageId") or 0),
+            int(session.get("bgQueueMinorMessageId") or 0),
+        ]
+        if any(messageId > 0 for messageId in bgQueueMessageIds):
             try:
                 attendees = _bgCandidates(await service.getAttendees(sessionId))
                 # Restore BG queue controls only while queue work is still pending.
                 if attendees and not _isBgQueueComplete(attendees):
-                    bot.add_view(BgQueueView(sessionId), message_id=int(bgQueueMessageId))
-                    restoredBgQueueViews += 1
+                    adultQueueMessageId = int(session.get("bgQueueMessageId") or 0)
+                    minorQueueMessageId = int(session.get("bgQueueMinorMessageId") or 0)
+                    if adultQueueMessageId > 0:
+                        bot.add_view(
+                            BgQueueView(sessionId, reviewBucket=bgBuckets.adultBgReviewBucket),
+                            message_id=adultQueueMessageId,
+                        )
+                        restoredBgQueueViews += 1
+                    if minorQueueMessageId > 0:
+                        bot.add_view(
+                            BgQueueView(sessionId, reviewBucket=bgBuckets.minorBgReviewBucket),
+                            message_id=minorQueueMessageId,
+                        )
+                        restoredBgQueueViews += 1
                     _ensureBgQueueRepostTask(bot, sessionId)
                     await requestBgQueueMessageUpdate(bot, sessionId, delaySec=0)
             except Exception:
@@ -618,11 +694,13 @@ GradingView = sessionControls.GradingView
 def _buildBgAttendeeReviewEmbed(
     attendee: dict,
     *,
+    reviewBucket: str = bgBuckets.adultBgReviewBucket,
     claimOwnerId: Optional[int] = None,
     includeClaimField: bool = True,
 ) -> discord.Embed:
     return bgQueueViews.buildBgAttendeeReviewEmbed(
         attendee,
+        reviewBucket=reviewBucket,
         claimOwnerId=claimOwnerId,
         includeClaimField=includeClaimField,
     )
@@ -632,8 +710,14 @@ async def _openBgAttendeePanel(
     interaction: discord.Interaction,
     sessionId: int,
     targetUserId: int,
+    reviewBucket: str = bgBuckets.adultBgReviewBucket,
 ) -> None:
-    await bgQueueViews.openBgAttendeePanel(interaction, sessionId, targetUserId)
+    await bgQueueViews.openBgAttendeePanel(
+        interaction,
+        sessionId,
+        targetUserId,
+        reviewBucket=reviewBucket,
+    )
 
 
 BgAttendeeReviewView = bgQueueViews.BgAttendeeReviewView
@@ -657,11 +741,13 @@ async def _sendBgInfoForTarget(
     interaction: discord.Interaction,
     sessionId: int,
     targetUserId: int,
+    reviewBucket: str = bgBuckets.adultBgReviewBucket,
 ) -> None:
     await bgInfoFlow.sendBgInfoForTarget(
         interaction,
         sessionId,
         targetUserId,
+        reviewBucket=reviewBucket,
         configModule=config,
         serviceModule=service,
         safeInteractionDefer=_safeInteractionDefer,
@@ -674,12 +760,13 @@ async def _sendBgInfoForTarget(
         scanRobloxBadgesForAttendee=_scanRobloxBadgesForAttendee,
         sendInventoryPrivateDm=_sendInventoryPrivateDm,
         loadJsonList=_loadJsonList,
-        buildActionsView=lambda sid, uid, viewerId, robloxUid, robloxName: bgInfoFlow.BgInfoActionsView(
+        buildActionsView=lambda sid, uid, viewerId, robloxUid, robloxName, bucket: bgInfoFlow.BgInfoActionsView(
             sid,
             uid,
             viewerId,
             robloxUid,
             robloxName,
+            reviewBucket=bucket,
             configModule=config,
             serviceModule=service,
             robloxModule=roblox,
@@ -740,6 +827,7 @@ async def _updateBgCheckMessage(
     interaction: discord.Interaction,
     sessionId: int,
     targetUserId: int,
+    reviewBucket: str = bgBuckets.adultBgReviewBucket,
 ) -> None:
     attendee = await service.getAttendee(sessionId, targetUserId)
     if not attendee or not interaction.message:
@@ -747,11 +835,12 @@ async def _updateBgCheckMessage(
 
     embed = _buildBgAttendeeReviewEmbed(
         attendee,
+        reviewBucket=reviewBucket,
         includeClaimField=False,
     )
 
     if isinstance(interaction.message, discord.Message):
-        newView = BgCheckView(sessionId, targetUserId)
+        newView = BgCheckView(sessionId, targetUserId, reviewBucket=reviewBucket)
         for child in newView.children:
             child.disabled = True
         await interaction.message.edit(embed=embed, view=newView)
@@ -1049,7 +1138,13 @@ async def _postOrientationResults(bot: discord.Client, sessionId: int) -> None:
 
 
 def _buildBgQueueMainView(sessionId: int, attendees: list[dict]) -> BgQueueView:
-    view = BgQueueView(sessionId)
+    reviewBucket = bgBuckets.adultBgReviewBucket
+    if attendees:
+        reviewBucket = bgBuckets.normalizeBgReviewBucket(
+            attendees[0].get("bgReviewBucket"),
+            default=bgBuckets.adultBgReviewBucket,
+        )
+    view = BgQueueView(sessionId, reviewBucket=reviewBucket)
     if _isBgQueueComplete(attendees):
         for child in view.children:
             child.disabled = True
@@ -1060,11 +1155,13 @@ async def _closeBgQueueControls(
     bot: discord.Client,
     sessionId: int,
     *,
+    reviewBucket: str | None = None,
     clearMessageReference: bool,
 ) -> None:
     await bgQueueMessaging.closeBgQueueControls(
         bot,
         sessionId,
+        reviewBucket=reviewBucket,
         clearMessageReference=clearMessageReference,
     )
 
@@ -1109,6 +1206,7 @@ async def updateSessionMessage(bot: discord.Client, sessionId: int):
     await msg.edit(embed=embed, view=view)
 
 async def postBgQueue(bot: discord.Client, sessionId: int, guild: discord.Guild):
+    await ensureBgReviewBuckets(bot, sessionId, guild)
     await bgQueueMessaging.postBgQueue(bot, sessionId, guild)
 
 
@@ -1179,6 +1277,8 @@ def _configureBgQueueMessagingModule() -> None:
         stopBgQueueRepostTask=_stopBgQueueRepostTask,
         ensureBgQueueRepostTask=_ensureBgQueueRepostTask,
         clearBgClaimsForSession=clearBgClaimsForSession,
+        clearBgClaim=clearBgClaim,
+        ensureBgReviewBuckets=ensureBgReviewBuckets,
         reconcileRecruitmentOrientationBonusesForSessionSafe=_reconcileRecruitmentOrientationBonusesForSessionSafe,
         scanRobloxGroupsForAttendees=_scanRobloxGroupsForAttendees,
         requestBgQueueMessageUpdate=requestBgQueueMessageUpdate,
@@ -1212,6 +1312,7 @@ def _configureBgQueueViewsModule() -> None:
         isBgQueueComplete=_isBgQueueComplete,
         closeBgQueueControls=_closeBgQueueControls,
         inventoryReviewIcon=inventoryReviewIcon,
+        badgeReviewIcon=badgeReviewIcon,
         bgReviewIcon=bgReviewIcon,
         flaggedReviewIcon=flaggedReviewIcon,
     )

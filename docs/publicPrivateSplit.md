@@ -57,6 +57,8 @@ The public-safe export path is:
 python tools\exportPublicRepo.py C:\path\to\jane-public --clean
 ```
 
+That target can be a normal folder or a cloned working copy of the public repo. `--clean` keeps the target repo's `.git` directory so you can export straight into the public clone and then commit from there.
+
 That export currently:
 
 - strips known private-only paths

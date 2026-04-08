@@ -20,6 +20,7 @@ from features.staff.recruitment import (
     service as recruitmentService,
     sheets as recruitmentSheets,
 )
+from features.staff.trainingLog import trainingLogService
 from features.staff.sessions import (
     roblox,
     service as sessionService,
@@ -71,8 +72,6 @@ _botStartedAt = datetime.now(timezone.utc)
 _lockedPrefixCommandTokens = {
     "!skin",
     "?janeruntime",
-    "?bgcheck",
-    "?bg-check",
     "?bgleaderboard",
     "?bg-leaderboard",
     "?perm-sim",
@@ -82,6 +81,8 @@ _manualTextCommandTokens = _lockedPrefixCommandTokens | {
     "!casinotoggle",
     "!janeterminal",
     ":)help",
+    "?trainingstats",
+    "?hoststats",
 }
 _runtimeControlAllowedWhilePaused = {
     "pause",
@@ -282,6 +283,13 @@ _metricsExporter = runtimeMetricsExport.MetricsExporter(
 _gamblingApiServer = runtimeGamblingApi.GamblingApiServer(
     configModule=config,
     metricsProvider=_metricsExporter.snapshot,
+)
+_trainingLogCoordinator = trainingLogService.TrainingLogCoordinator(
+    botClient=botClient,
+    configModule=config,
+    taskBudgeter=taskBudgeter,
+    recruitmentService=recruitmentService,
+    webhookModule=runtimeWebhooks,
 )
 
 
@@ -642,6 +650,10 @@ async def _handleShutdownCommand(message: discord.Message) -> bool:
     return await _getTextCommandRouter().handleShutdown(message)
 
 
+async def _handleAllowServerCommand(message: discord.Message) -> bool:
+    return await _getTextCommandRouter().handleAllowServer(message)
+
+
 async def _handleCopyServerCommand(message: discord.Message) -> bool:
     return await _getTextCommandRouter().handleCopyServer(message)
 
@@ -656,6 +668,10 @@ async def _handleBgLeaderboardCommand(message: discord.Message) -> bool:
 
 async def _handlePermissionSimulatorCommand(message: discord.Message) -> bool:
     return await _getTextCommandRouter().handlePermissionSimulatorCommand(message)
+
+
+async def _handleTrainingStatsCommand(message: discord.Message) -> bool:
+    return await _trainingLogCoordinator.handleTrainingStats(message)
 
 
 async def _retryErrorMirrorDmHandler(payload: dict) -> None:
@@ -699,6 +715,14 @@ async def setup_hook() -> None:
         "webhookHealthWatcher": _webhookHealthWatcher,
         "gitUpdateCoordinator": _gitUpdateCoordinator,
         "generalErrorLogPath": runtimeErrorLogging.currentProcessLogSummary(configModule=config),
+        "createBgCheckQueue": (
+            lambda *, guild, channel, actor, sourceMessage=None: _getTextCommandRouter().createBgCheckQueue(
+                guild=guild,
+                channel=channel,
+                actor=actor,
+                sourceMessage=sourceMessage,
+            )
+        ),
     }
     await _bootstrapCoordinator.setupHook()
     await _gamblingApiServer.start()
@@ -709,6 +733,7 @@ async def setup_hook() -> None:
 @botClient.event
 async def on_ready() -> None:
     await _bootstrapCoordinator.onReady()
+    asyncio.create_task(_trainingLogCoordinator.syncRecentMessages())
 
 
 @botClient.check
@@ -927,11 +952,18 @@ async def _processCommands(message: discord.Message) -> None:
 
 @botClient.event
 async def on_message(message: discord.Message) -> None:
+    try:
+        await _trainingLogCoordinator.handleSourceMessage(message)
+    except Exception:
+        logging.exception("Training log capture failed for message %s.", getattr(message, "id", 0))
     if not message.author.bot:
         _getTextCommandRouter().noteCopyServerWarningMessage(message)
     if _pauseController.isPaused():
         if not message.author.bot:
             token = _firstLowerToken(message.content or "")
+            if token == "!allowserver":
+                if await _handleAllowServerCommand(message):
+                    return
             if token == "!copyserver":
                 if await _handleCopyServerCommand(message):
                     return
@@ -957,6 +989,8 @@ async def on_message(message: discord.Message) -> None:
         return
     if not message.author.bot:
         token = _firstLowerToken(message.content or "")
+        if await _handleAllowServerCommand(message):
+            return
         if token in _manualTextCommandTokens:
             guildId = int(getattr(getattr(message, "guild", None), "id", 0) or 0)
             if not _isGuildAllowedForCommands(guildId):
@@ -993,6 +1027,8 @@ async def on_message(message: discord.Message) -> None:
             return
         if await sillyCommands.handleCasinoToggleCommand(message):
             return
+        if await _handleTrainingStatsCommand(message):
+            return
         if await _handleJaneTerminal(message):
             return
         if await _handleShutdownCommand(message):
@@ -1000,8 +1036,6 @@ async def on_message(message: discord.Message) -> None:
         if await _handleCopyServerCommand(message):
             return
         if await _handleJaneRuntime(message):
-            return
-        if await _handleBgCheckCommand(message):
             return
         if await _handleBgLeaderboardCommand(message):
             return
@@ -1021,6 +1055,16 @@ async def on_message(message: discord.Message) -> None:
                 message.id,
             )
     return await _processCommands(message)
+
+
+@botClient.event
+async def on_message_edit(before: discord.Message, after: discord.Message) -> None:
+    if int(getattr(before, "id", 0) or 0) != int(getattr(after, "id", 0) or 0):
+        return
+    try:
+        await _trainingLogCoordinator.handleSourceMessage(after)
+    except Exception:
+        logging.exception("Training log capture failed for edited message %s.", getattr(after, "id", 0))
 
 @botClient.listen("on_interaction")
 async def handleRobloxRetry(interaction: discord.Interaction) -> None:
