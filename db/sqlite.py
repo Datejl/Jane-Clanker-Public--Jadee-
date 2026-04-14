@@ -70,7 +70,8 @@ async def initDb():
             sessionType TEXT NOT NULL,
             hostId INTEGER NOT NULL,
             passwordHash TEXT NOT NULL,
-            status TEXT NOT NULL,              -- OPEN/GRADING/FINISHED/CANCELED
+            maxAttendeeLimit INTEGER DEFAULT 30,
+            status TEXT NOT NULL,              -- OPEN/GRADING/FINISHED/CANCELED/FULL
             gradingIndex INTEGER NOT NULL DEFAULT 0,
             createdAt TEXT NOT NULL DEFAULT (datetime('now')),
             finishedAt TEXT,
@@ -78,6 +79,7 @@ async def initDb():
             bgQueueMinorMessageId INTEGER
         );
         """)
+        await _executeOptional("ALTER TABLE sessions ADD COLUMN maxAttendeeLimit INTEGER DEFAULT 30")
         await _executeOptional("ALTER TABLE sessions ADD COLUMN bgQueueMessageId INTEGER")
         await _executeOptional("ALTER TABLE sessions ADD COLUMN bgQueueMinorMessageId INTEGER")
         await db.execute("""
