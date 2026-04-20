@@ -2,26 +2,25 @@
 
 from typing import Any, Optional
 
-from features.staff.workflows import rendering as workflowRendering
-from features.staff.workflows import service as workflowService
+from features.staff.workflows.bridge import (
+    WorkflowSubjectBridge,
+    normalizedStatus,
+    stateKeyForStatus,
+)
 
 _RIBBON_WORKFLOW_KEY = "ribbons"
 _RIBBON_SUBJECT_TYPE = "ribbon_request"
+_RIBBON_STATUS_STATES = {
+    "APPROVED": "approved",
+    "REJECTED": "rejected",
+    "NEEDS_INFO": "needs-info",
+    "CANCELED": "canceled",
+    "PENDING": "pending-review",
+}
 
 
 def _stateForRibbonStatus(status: object) -> str:
-    normalized = str(status or "").strip().upper()
-    if normalized == "APPROVED":
-        return "approved"
-    if normalized == "REJECTED":
-        return "rejected"
-    if normalized == "NEEDS_INFO":
-        return "needs-info"
-    if normalized == "CANCELED":
-        return "canceled"
-    if normalized == "PENDING":
-        return "pending-review"
-    return "submitted"
+    return stateKeyForStatus(status, _RIBBON_STATUS_STATES, default="submitted")
 
 
 def _ribbonDisplayName(requestRow: dict[str, Any]) -> str:
@@ -44,8 +43,19 @@ def _ribbonMetadata(requestRow: dict[str, Any]) -> dict[str, Any]:
         "requesterId": int(requestRow.get("requesterId") or 0),
         "reviewMessageId": int(requestRow.get("reviewMessageId") or 0),
         "reviewChannelId": int(requestRow.get("reviewChannelId") or 0),
-        "status": str(requestRow.get("status") or "").strip().upper(),
+        "status": normalizedStatus(requestRow.get("status")),
     }
+
+
+_ribbonBridge = WorkflowSubjectBridge(
+    workflowKey=_RIBBON_WORKFLOW_KEY,
+    subjectType=_RIBBON_SUBJECT_TYPE,
+    subjectIdField="requestId",
+    displayName=_ribbonDisplayName,
+    metadata=_ribbonMetadata,
+    stateForStatus=_stateForRibbonStatus,
+    missingIdentifiersMessage="Ribbon request row is missing workflow identifiers.",
+)
 
 
 async def syncRibbonWorkflow(
@@ -57,46 +67,25 @@ async def syncRibbonWorkflow(
     eventType: str = "STATE_CHANGE",
     allowNoopEvent: bool = False,
 ) -> dict[str, Any]:
-    requestId = int(requestRow.get("requestId") or 0)
-    guildId = int(requestRow.get("guildId") or 0)
-    if requestId <= 0 or guildId <= 0:
-        raise ValueError("Ribbon request row is missing workflow identifiers.")
-
-    return await workflowService.transitionSubjectRun(
-        workflowKey=_RIBBON_WORKFLOW_KEY,
-        subjectType=_RIBBON_SUBJECT_TYPE,
-        subjectId=requestId,
-        guildId=guildId,
-        stateKey=stateKey or _stateForRibbonStatus(requestRow.get("status")),
+    return await _ribbonBridge.sync(
+        requestRow,
+        stateKey=stateKey,
         actorId=actorId,
         note=note,
         eventType=eventType,
-        displayName=_ribbonDisplayName(requestRow),
-        metadata=_ribbonMetadata(requestRow),
         allowNoopEvent=allowNoopEvent,
     )
 
 
 async def ensureRibbonWorkflowCurrent(requestRow: dict[str, Any]) -> dict[str, Any]:
-    return await syncRibbonWorkflow(
+    return await _ribbonBridge.ensureCurrent(
         requestRow,
-        actorId=None,
         note="Workflow synchronized from ribbon request status.",
-        eventType="SYNC",
-        allowNoopEvent=False,
     )
 
 
 async def getRibbonWorkflowSummary(requestRow: dict[str, Any]) -> str:
-    run = await workflowService.getRunBySubject(
-        workflowKey=_RIBBON_WORKFLOW_KEY,
-        subjectType=_RIBBON_SUBJECT_TYPE,
-        subjectId=int(requestRow.get("requestId") or 0),
-    )
-    if not run:
-        return ""
-    latestEvent = await workflowService.getLatestRunEvent(int(run["runId"]))
-    return workflowRendering.buildCompactSummary(run, latestEvent)
+    return await _ribbonBridge.summary(requestRow)
 
 
 async def getRibbonWorkflowHistorySummary(
@@ -104,44 +93,11 @@ async def getRibbonWorkflowHistorySummary(
     *,
     limit: int = 3,
 ) -> str:
-    run = await workflowService.getRunBySubject(
-        workflowKey=_RIBBON_WORKFLOW_KEY,
-        subjectType=_RIBBON_SUBJECT_TYPE,
-        subjectId=int(requestRow.get("requestId") or 0),
-    )
-    if not run:
-        return ""
-    rows = await workflowService.listRunEvents(int(run["runId"]), limit=max(1, min(int(limit or 3), 5)))
-    if not rows:
-        return ""
-    return workflowRendering.buildWorkflowEventSummary(rows)
+    return await _ribbonBridge.historySummary(requestRow, limit=limit)
 
 
 async def reconcileRibbonWorkflowRows(rows: list[dict[str, Any]]) -> tuple[int, int]:
-    checked = 0
-    changed = 0
-    for row in rows:
-        requestId = int(row.get("requestId") or 0)
-        guildId = int(row.get("guildId") or 0)
-        if requestId <= 0 or guildId <= 0:
-            continue
-        checked += 1
-        existingRun = await workflowService.getRunBySubject(
-            workflowKey=_RIBBON_WORKFLOW_KEY,
-            subjectType=_RIBBON_SUBJECT_TYPE,
-            subjectId=requestId,
-        )
-        beforeUpdatedAt = str(existingRun.get("updatedAt") or "").strip() if existingRun else ""
-        await ensureRibbonWorkflowCurrent(row)
-        afterRun = await workflowService.getRunBySubject(
-            workflowKey=_RIBBON_WORKFLOW_KEY,
-            subjectType=_RIBBON_SUBJECT_TYPE,
-            subjectId=requestId,
-        )
-        afterUpdatedAt = str(afterRun.get("updatedAt") or "").strip() if afterRun else ""
-        if existingRun is None or afterUpdatedAt != beforeUpdatedAt:
-            changed += 1
-    return checked, changed
+    return await _ribbonBridge.reconcileRows(rows, ensureFn=ensureRibbonWorkflowCurrent)
 
 __all__ = [
     "ensureRibbonWorkflowCurrent",

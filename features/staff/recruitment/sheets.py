@@ -33,8 +33,19 @@ def _normalize(value: str) -> str:
     return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
 
 
+def _cleanRobloxUsername(value: Any) -> str:
+    text = str(value or "").strip()
+    for marker in ("\u200b", "\u200c", "\u200d", "\ufeff"):
+        text = text.replace(marker, "")
+    return "".join(ch for ch in text if not ch.isspace())
+
+
+def _usernameLookupKey(value: Any) -> str:
+    return _cleanRobloxUsername(value).casefold()
+
+
 def _usernameSortTuple(value: Any) -> tuple[str, str]:
-    raw = str(value or "").strip()
+    raw = _cleanRobloxUsername(value)
     return (_normalize(raw), raw.casefold())
 
 
@@ -778,6 +789,9 @@ def _nextPromotionRank(currentRank: str, allTimePoints: int) -> Optional[str]:
 
 
 def _insertMissingMemberRow(service, header: Dict[str, str], robloxUsername: str) -> Optional[int]:
+    robloxUsername = _cleanRobloxUsername(robloxUsername)
+    if not robloxUsername:
+        return None
     usernameCol = header["robloxUsername"]
     rankCol = header["rsRank"]
     _ensureSectionSpacerRows(service, usernameCol)
@@ -1229,16 +1243,16 @@ def _findRowByRobloxUsername(service, usernameColumn: str, rankColumn: str, user
     )
     usernames = valueRanges[0].get("values", []) if len(valueRanges) > 0 else []
     ranks = valueRanges[1].get("values", []) if len(valueRanges) > 1 else []
-    target = username.strip().lower()
+    target = _usernameLookupKey(username)
     totalRows = max(len(usernames), len(ranks))
     for idx in range(1, totalRows + 1):
         usernameRow = usernames[idx - 1] if idx - 1 < len(usernames) else []
         rankRow = ranks[idx - 1] if idx - 1 < len(ranks) else []
-        usernameCell = str(usernameRow[0]).strip() if usernameRow else ""
+        usernameCell = _cleanRobloxUsername(usernameRow[0]) if usernameRow else ""
         rankCell = str(rankRow[0]).strip() if rankRow else ""
         if not _isWritableMemberRow(usernameCell, rankCell):
             continue
-        if usernameCell.lower() == target:
+        if _usernameLookupKey(usernameCell) == target:
             return idx
     return None
 
@@ -1440,7 +1454,7 @@ def syncRecruitmentRolePlacement(
     hasAnrorsRmPlusRole: bool,
     organizeAfter: bool = True,
 ) -> dict:
-    username = str(robloxUsername or "").strip()
+    username = _cleanRobloxUsername(robloxUsername)
     if not username:
         return {"ok": False, "reason": "missing-username"}
 
@@ -1540,6 +1554,7 @@ def applyApprovedLog(
     patrolDelta: int,
     organizeAfter: bool = True,
 ) -> bool:
+    robloxUsername = _cleanRobloxUsername(robloxUsername)
     if not robloxUsername:
         return False
 
@@ -1591,6 +1606,7 @@ def applyApprovedLog(
     quotaStatus = _computeQuotaStatus(rankForQuota, monthly, patrols, currentQuotaStatus)
 
     data = [
+        {"range": _range(header["robloxUsername"], row), "values": [[robloxUsername]]},
         {"range": ranges["monthly"], "values": [[monthly]]},
         {"range": ranges["allTime"], "values": [[allTime]]},
         {"range": ranges["patrols"], "values": [[patrols]]},
@@ -1622,7 +1638,7 @@ def applyApprovedLogsBatch(
     for raw in updates:
         if not isinstance(raw, dict):
             continue
-        username = str(raw.get("robloxUsername") or "").strip()
+        username = _cleanRobloxUsername(raw.get("robloxUsername"))
         if not username:
             continue
         try:
@@ -1639,7 +1655,7 @@ def applyApprovedLogsBatch(
             hostedPatrolDelta = 0
         if pointsDelta == 0 and patrolDelta == 0 and hostedPatrolDelta == 0:
             continue
-        key = username.lower()
+        key = _usernameLookupKey(username)
         slot = aggregate.get(key)
         if slot is None:
             aggregate[key] = {
@@ -1683,11 +1699,11 @@ def applyApprovedLogsBatch(
     for idx in range(1, totalRows + 1):
         usernameRow = usernames[idx - 1] if idx - 1 < len(usernames) else []
         rankRow = ranks[idx - 1] if idx - 1 < len(ranks) else []
-        usernameCell = str(usernameRow[0]).strip() if usernameRow else ""
+        usernameCell = _cleanRobloxUsername(usernameRow[0]) if usernameRow else ""
         rankCell = str(rankRow[0]).strip() if rankRow else ""
         if not _isWritableMemberRow(usernameCell, rankCell):
             continue
-        rowByUsername[usernameCell.lower()] = idx
+        rowByUsername[_usernameLookupKey(usernameCell)] = idx
 
     updatesByRow: dict[int, dict[str, int | str]] = {}
     for key, entry in aggregate.items():
@@ -1697,6 +1713,7 @@ def applyApprovedLogsBatch(
             if not row:
                 continue
             rowByUsername[key] = row
+        entry["robloxUsername"] = _cleanRobloxUsername(entry.get("robloxUsername"))
         updatesByRow[row] = entry
 
     if not updatesByRow:
@@ -1743,6 +1760,7 @@ def applyApprovedLogsBatch(
         rankForQuota = promotedRank or currentRank
         quotaStatus = _computeQuotaStatus(rankForQuota, monthly, patrols, currentQuotaStatus)
 
+        batchData.append({"range": _range(header["robloxUsername"], row), "values": [[entry["robloxUsername"]]]})
         batchData.append({"range": _range(header["monthly"], row), "values": [[monthly]]})
         batchData.append({"range": _range(header["allTime"], row), "values": [[allTime]]})
         batchData.append({"range": _range(header["patrols"], row), "values": [[patrols]]})

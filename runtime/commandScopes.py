@@ -3,29 +3,33 @@ from __future__ import annotations
 import discord
 
 import config
+from runtime import normalization
 
-TEST_GUILD_ONLY_MESSAGE = "This command is only available in the test server."
-
-
-def _normalizeGuildIds(values: list[int] | tuple[int, ...] | set[int] | None) -> tuple[int, ...]:
-    out: list[int] = []
-    for rawValue in values or []:
-        try:
-            guildId = int(rawValue)
-        except (TypeError, ValueError):
-            continue
-        if guildId <= 0 or guildId in out:
-            continue
-        out.append(guildId)
-    return tuple(out)
+TEST_GUILD_ONLY_MESSAGE = "This command is only available in the test servers."
 
 
-_testGuildIds = _normalizeGuildIds(
-    [
-        getattr(config, "serverIdTesting", 0),
-    ]
-)
+def _normalizeGuildIds(values: object) -> tuple[int, ...]:
+    return tuple(normalization.normalizeIntList(values))
+
+
+def _configuredTestGuildIds() -> tuple[int, ...]:
+    configuredGuildIds = getattr(config, "testGuildIds", None)
+    if configuredGuildIds is None:
+        configuredGuildIds = [getattr(config, "serverIdTesting", 0)]
+    return _normalizeGuildIds(configuredGuildIds)
+
+
+_testGuildIds = _configuredTestGuildIds()
+_testGuildIdSet = frozenset(_testGuildIds)
 _testGuildObjects = tuple(discord.Object(id=guildId) for guildId in _testGuildIds)
+
+
+def getGuildAndTestGuildIds(*guildIds: int) -> tuple[int, ...]:
+    return _normalizeGuildIds([*guildIds, *_testGuildIds])
+
+
+def getGuildAndTestGuildObjects(*guildIds: int) -> tuple[discord.Object, ...]:
+    return tuple(discord.Object(id=guildId) for guildId in getGuildAndTestGuildIds(*guildIds))
 
 
 def getTestGuildIds() -> tuple[int, ...]:
@@ -37,13 +41,10 @@ def getTestGuildObjects() -> tuple[discord.Object, ...]:
 
 
 def isTestGuild(guildId: int | None) -> bool:
-    if guildId is None:
+    parsedGuildId = normalization.toPositiveInt(guildId)
+    if parsedGuildId <= 0:
         return False
-    try:
-        parsedGuildId = int(guildId)
-    except (TypeError, ValueError):
-        return False
-    return parsedGuildId in _testGuildIds
+    return parsedGuildId in _testGuildIdSet
 
 
 def isInteractionInTestGuild(interaction: discord.Interaction) -> bool:

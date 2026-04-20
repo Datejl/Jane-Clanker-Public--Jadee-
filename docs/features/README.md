@@ -10,6 +10,7 @@ If you want more specific "what does this actual file do?" docs, check:
 ## Feature Runbooks
 
 - [Sessions And BG Checks](sessions.md)
+- [BG Intelligence](bgIntelligence.md)
 - [Server Recovery](serverRecovery.md)
 - [Training Log Mirror](trainingLogMirror.md)
 - [Best Of](bestOf.md)

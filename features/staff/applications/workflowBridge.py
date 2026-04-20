@@ -2,24 +2,24 @@
 
 from typing import Any, Optional
 
-from features.staff.workflows import rendering as workflowRendering
-from features.staff.workflows import service as workflowService
+from features.staff.workflows.bridge import (
+    WorkflowSubjectBridge,
+    normalizedStatus,
+    stateKeyForStatus,
+)
 
 _APPLICATION_WORKFLOW_KEY = "applications"
 _APPLICATION_SUBJECT_TYPE = "division_application"
+_APPLICATION_STATUS_STATES = {
+    "APPROVED": "approved",
+    "DENIED": "denied",
+    "NEEDS_INFO": "needs-info",
+    "PENDING": "pending-review",
+}
 
 
 def _stateForApplicationStatus(status: object) -> str:
-    normalized = str(status or "").strip().upper()
-    if normalized == "APPROVED":
-        return "approved"
-    if normalized == "DENIED":
-        return "denied"
-    if normalized == "NEEDS_INFO":
-        return "needs-info"
-    if normalized == "PENDING":
-        return "pending-review"
-    return "submitted"
+    return stateKeyForStatus(status, _APPLICATION_STATUS_STATES, default="submitted")
 
 
 def _applicationDisplayName(application: dict[str, Any]) -> str:
@@ -43,8 +43,19 @@ def _applicationMetadata(application: dict[str, Any]) -> dict[str, Any]:
         "applicantId": int(application.get("applicantId") or 0),
         "reviewMessageId": int(application.get("reviewMessageId") or 0),
         "reviewChannelId": int(application.get("reviewChannelId") or 0),
-        "status": str(application.get("status") or "").strip().upper(),
+        "status": normalizedStatus(application.get("status")),
     }
+
+
+_applicationBridge = WorkflowSubjectBridge(
+    workflowKey=_APPLICATION_WORKFLOW_KEY,
+    subjectType=_APPLICATION_SUBJECT_TYPE,
+    subjectIdField="applicationId",
+    displayName=_applicationDisplayName,
+    metadata=_applicationMetadata,
+    stateForStatus=_stateForApplicationStatus,
+    missingIdentifiersMessage="Application row is missing workflow identifiers.",
+)
 
 
 async def syncApplicationWorkflow(
@@ -56,46 +67,25 @@ async def syncApplicationWorkflow(
     eventType: str = "STATE_CHANGE",
     allowNoopEvent: bool = False,
 ) -> dict[str, Any]:
-    applicationId = int(application.get("applicationId") or 0)
-    guildId = int(application.get("guildId") or 0)
-    if applicationId <= 0 or guildId <= 0:
-        raise ValueError("Application row is missing workflow identifiers.")
-
-    return await workflowService.transitionSubjectRun(
-        workflowKey=_APPLICATION_WORKFLOW_KEY,
-        subjectType=_APPLICATION_SUBJECT_TYPE,
-        subjectId=applicationId,
-        guildId=guildId,
-        stateKey=stateKey or _stateForApplicationStatus(application.get("status")),
+    return await _applicationBridge.sync(
+        application,
+        stateKey=stateKey,
         actorId=actorId,
         note=note,
         eventType=eventType,
-        displayName=_applicationDisplayName(application),
-        metadata=_applicationMetadata(application),
         allowNoopEvent=allowNoopEvent,
     )
 
 
 async def ensureApplicationWorkflowCurrent(application: dict[str, Any]) -> dict[str, Any]:
-    return await syncApplicationWorkflow(
+    return await _applicationBridge.ensureCurrent(
         application,
-        actorId=None,
         note="Workflow synchronized from application status.",
-        eventType="SYNC",
-        allowNoopEvent=False,
     )
 
 
 async def getApplicationWorkflowSummary(application: dict[str, Any]) -> str:
-    run = await workflowService.getRunBySubject(
-        workflowKey=_APPLICATION_WORKFLOW_KEY,
-        subjectType=_APPLICATION_SUBJECT_TYPE,
-        subjectId=int(application.get("applicationId") or 0),
-    )
-    if not run:
-        return ""
-    latestEvent = await workflowService.getLatestRunEvent(int(run["runId"]))
-    return workflowRendering.buildCompactSummary(run, latestEvent)
+    return await _applicationBridge.summary(application)
 
 
 async def getApplicationWorkflowHistorySummary(
@@ -103,44 +93,11 @@ async def getApplicationWorkflowHistorySummary(
     *,
     limit: int = 3,
 ) -> str:
-    run = await workflowService.getRunBySubject(
-        workflowKey=_APPLICATION_WORKFLOW_KEY,
-        subjectType=_APPLICATION_SUBJECT_TYPE,
-        subjectId=int(application.get("applicationId") or 0),
-    )
-    if not run:
-        return ""
-    rows = await workflowService.listRunEvents(int(run["runId"]), limit=max(1, min(int(limit or 3), 5)))
-    if not rows:
-        return ""
-    return workflowRendering.buildWorkflowEventSummary(rows)
+    return await _applicationBridge.historySummary(application, limit=limit)
 
 
 async def reconcileApplicationWorkflowRows(rows: list[dict[str, Any]]) -> tuple[int, int]:
-    checked = 0
-    changed = 0
-    for row in rows:
-        applicationId = int(row.get("applicationId") or 0)
-        guildId = int(row.get("guildId") or 0)
-        if applicationId <= 0 or guildId <= 0:
-            continue
-        checked += 1
-        existingRun = await workflowService.getRunBySubject(
-            workflowKey=_APPLICATION_WORKFLOW_KEY,
-            subjectType=_APPLICATION_SUBJECT_TYPE,
-            subjectId=applicationId,
-        )
-        beforeUpdatedAt = str(existingRun.get("updatedAt") or "").strip() if existingRun else ""
-        await ensureApplicationWorkflowCurrent(row)
-        afterRun = await workflowService.getRunBySubject(
-            workflowKey=_APPLICATION_WORKFLOW_KEY,
-            subjectType=_APPLICATION_SUBJECT_TYPE,
-            subjectId=applicationId,
-        )
-        afterUpdatedAt = str(afterRun.get("updatedAt") or "").strip() if afterRun else ""
-        if existingRun is None or afterUpdatedAt != beforeUpdatedAt:
-            changed += 1
-    return checked, changed
+    return await _applicationBridge.reconcileRows(rows, ensureFn=ensureApplicationWorkflowCurrent)
 
 __all__ = [
     "ensureApplicationWorkflowCurrent",

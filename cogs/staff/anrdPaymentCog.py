@@ -21,17 +21,11 @@ log = logging.getLogger(__name__)
 
 
 def _normalizeRoleIdList(rawValues) -> set[int]:
-    out: set[int] = set()
-    for value in rawValues or []:
-        try:
-            out.add(int(value))
-        except (TypeError, ValueError):
-            continue
-    return out
+    return set(runtimePermissions.normalizeRoleIds(rawValues))
 
 
 def _hasAnyRole(member: discord.Member, roleIds: set[int]) -> bool:
-    return bool(roleIds) and any(role.id in roleIds for role in member.roles)
+    return runtimePermissions.hasAnyRole(member, roleIds)
 
 
 def _setAllButtonsDisabled(view: discord.ui.View, disabled: bool) -> None:

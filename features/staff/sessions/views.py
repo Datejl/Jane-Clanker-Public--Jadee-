@@ -20,6 +20,7 @@ from features.staff.sessions import (
     bgQueueViews,
     bgQueueMessaging,
     bgScanPipeline,
+    bgSpreadsheetQueue,
     postActions,
     roblox,
     service,
@@ -1224,9 +1225,57 @@ async def updateSessionMessage(bot: discord.Client, sessionId: int):
     await view.disableIfLocked()
     await msg.edit(embed=embed, view=view)
 
+def _bgSpreadsheetReviewChannelIds(session: dict[str, Any]) -> list[int]:
+    channelIds: list[int] = []
+    for bucket in (bgBuckets.adultBgReviewBucket, bgBuckets.minorBgReviewBucket):
+        for channelId in bgQueueMessaging.bgQueueChannelCandidateIds(session, reviewBucket=bucket):
+            try:
+                parsedChannelId = int(channelId)
+            except (TypeError, ValueError):
+                continue
+            if parsedChannelId > 0 and parsedChannelId not in channelIds:
+                channelIds.append(parsedChannelId)
+    return channelIds
+
+
 async def postBgQueue(bot: discord.Client, sessionId: int, guild: discord.Guild):
     await ensureBgReviewBuckets(bot, sessionId, guild)
-    await bgQueueMessaging.postBgQueue(bot, sessionId, guild)
+    attendees = _bgCandidates(await service.getAttendees(sessionId))
+    if not attendees:
+        return bgSpreadsheetQueue.BgSpreadsheetResult(
+            skipped_reason="No passing attendees need a BGC spreadsheet."
+        )
+
+    session = await service.getSession(sessionId)
+    if not session:
+        return bgSpreadsheetQueue.BgSpreadsheetResult(
+            skipped_reason="Orientation session could not be found."
+        )
+
+    result = await bgSpreadsheetQueue.createSpreadsheetForUserIds(
+        [int(attendee["userId"]) for attendee in attendees],
+        sourceGuild=guild,
+        titlePrefix="Orientation",
+        guildId=int(session.get("guildId") or getattr(guild, "id", 0) or 0),
+    )
+    if not result.url:
+        return result
+
+    channelIds = _bgSpreadsheetReviewChannelIds(session)
+    result.expected_channel_ids = list(channelIds)
+    for channelId in channelIds:
+        channel = await _getCachedChannel(bot, int(channelId))
+        if not isinstance(channel, (discord.TextChannel, discord.Thread)):
+            continue
+        try:
+            await channel.send(
+                f"Orientation BGC Spreadsheet created: {result.url}",
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        except (discord.Forbidden, discord.HTTPException):
+            continue
+        result.posted_channel_ids.append(int(channelId))
+    return result
 
 
 def _configureSessionControlsModule() -> None:

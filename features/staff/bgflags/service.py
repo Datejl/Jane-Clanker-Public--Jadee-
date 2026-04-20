@@ -3,13 +3,27 @@ from typing import Optional, List, Dict
 from db.sqlite import execute, executeReturnId, fetchAll
 
 
-async def addRule(ruleType: str, ruleValue: str, note: Optional[str], createdBy: Optional[int]) -> int:
+def normalizeSeverity(value: object) -> int:
+    try:
+        severity = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(100, severity))
+
+
+async def addRule(
+    ruleType: str,
+    ruleValue: str,
+    note: Optional[str],
+    createdBy: Optional[int],
+    severity: int = 0,
+) -> int:
     return await executeReturnId(
         """
-        INSERT INTO bg_flag_rules (ruleType, ruleValue, note, createdBy)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO bg_flag_rules (ruleType, ruleValue, note, severity, createdBy)
+        VALUES (?, ?, ?, ?, ?)
         """,
-        (ruleType, ruleValue, note, createdBy),
+        (ruleType, ruleValue, note, normalizeSeverity(severity), createdBy),
     )
 
 

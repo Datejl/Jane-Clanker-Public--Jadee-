@@ -17,25 +17,34 @@ _modsOnlyMessage = "Mods only."
 _flagTypeChoices = [
     app_commands.Choice(name="Group", value="group"),
     app_commands.Choice(name="Username", value="username"),
+    app_commands.Choice(name="Roblox User ID", value="roblox_user"),
+    app_commands.Choice(name="Watchlist User ID", value="watchlist"),
+    app_commands.Choice(name="Banned User ID", value="banned_user"),
     app_commands.Choice(name="Keyword", value="keyword"),
     app_commands.Choice(name="Group Keyword", value="group_keyword"),
     app_commands.Choice(name="Item Keyword", value="item_keyword"),
     app_commands.Choice(name="Item", value="item"),
     app_commands.Choice(name="Creator", value="creator"),
     app_commands.Choice(name="Badge", value="badge"),
+    app_commands.Choice(name="Favorite Game", value="game"),
+    app_commands.Choice(name="Favorite Game Keyword", value="game_keyword"),
 ]
 _flagTypeValues = {choice.value for choice in _flagTypeChoices}
-_numericRuleTypes = {"group", "item", "creator", "badge"}
+_numericRuleTypes = {"group", "item", "creator", "badge", "roblox_user", "watchlist", "banned_user", "game"}
 _rulesCategoryChoices = [
     discord.SelectOption(label="Groups", value="groups"),
+    discord.SelectOption(label="Direct Users", value="users"),
     discord.SelectOption(label="Items / Accessories", value="items"),
+    discord.SelectOption(label="Favorite Games", value="games"),
     discord.SelectOption(label="Keywords", value="keywords"),
     discord.SelectOption(label="Badges", value="badges"),
 ]
 _rulesCategoryTypeMap = {
     "groups": {"group"},
+    "users": {"roblox_user", "watchlist", "banned_user"},
     "items": {"item", "creator"},
-    "keywords": {"keyword", "username", "group_keyword", "item_keyword"},
+    "games": {"game", "game_keyword"},
+    "keywords": {"keyword", "username", "group_keyword", "item_keyword", "game_keyword"},
     "badges": {"badge"},
 }
 
@@ -70,7 +79,9 @@ def _rulesListText(rules: list[dict]) -> str:
     lines: list[str] = []
     for rule in rules[:40]:
         note = f" - {rule['note']}" if rule.get("note") else ""
-        lines.append(f"#{rule['ruleId']} [{rule['ruleType']}] {rule['ruleValue']}{note}")
+        severity = int(rule.get("severity") or 0)
+        severityText = f" severity={severity}" if severity > 0 else ""
+        lines.append(f"#{rule['ruleId']} [{rule['ruleType']}] {rule['ruleValue']}{severityText}{note}")
     if len(rules) > 40:
         lines.append(f"... and {len(rules) - 40} more")
     return "\n".join(lines)
@@ -81,8 +92,13 @@ def _ruleField(rule: dict) -> tuple[str, str]:
     ruleType = str(rule.get("ruleType") or "").strip().lower()
     ruleValue = str(rule.get("ruleValue") or "").strip()
     note = str(rule.get("note") or "").strip()
+    severity = int(rule.get("severity") or 0)
     fieldName = f"#{ruleId} [{ruleType}]"
-    fieldValue = f"Value: `{ruleValue}`\nNote: {note if note else '(none)'}"
+    fieldValue = (
+        f"Value: `{ruleValue}`\n"
+        f"Severity: `{severity if severity > 0 else 'default'}`\n"
+        f"Note: {note if note else '(none)'}"
+    )
     return fieldName, fieldValue
 
 
@@ -189,7 +205,7 @@ class BgRulesPanelView(discord.ui.View):
 class BgFlagAddRuleModal(discord.ui.Modal, title="Add BG Flag Rule"):
     ruleType = discord.ui.TextInput(
         label="Rule Type",
-        placeholder="group / username / keyword / group_keyword / item_keyword / item / creator / badge",
+        placeholder="group / username / roblox_user / watchlist / banned_user / keyword / item / badge / game",
         required=True,
         max_length=32,
     )
@@ -204,6 +220,12 @@ class BgFlagAddRuleModal(discord.ui.Modal, title="Add BG Flag Rule"):
         style=discord.TextStyle.paragraph,
         required=False,
         max_length=300,
+    )
+    severity = discord.ui.TextInput(
+        label="Severity / min score (optional)",
+        placeholder="1-100. Blank uses Jane's default for this rule type.",
+        required=False,
+        max_length=3,
     )
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
@@ -227,7 +249,7 @@ class BgFlagAddRuleModal(discord.ui.Modal, title="Add BG Flag Rule"):
             except ValueError:
                 await interactionRuntime.safeInteractionReply(
                     interaction,
-                    content="IDs must be numeric for group/item/creator/badge rules.",
+                    content="IDs must be numeric for group/item/creator/badge/direct-user/game rules.",
                     ephemeral=True,
                 )
                 return
@@ -236,15 +258,31 @@ class BgFlagAddRuleModal(discord.ui.Modal, title="Add BG Flag Rule"):
             normalizedValue = rawValue.lower()
 
         noteText = str(self.note).strip() or None
+        rawSeverity = str(self.severity).strip()
+        severityValue = 0
+        if rawSeverity:
+            try:
+                severityValue = flagService.normalizeSeverity(rawSeverity)
+            except (TypeError, ValueError):
+                severityValue = 0
+            if severityValue <= 0:
+                await interactionRuntime.safeInteractionReply(
+                    interaction,
+                    content="Severity must be a number from 1 to 100, or left blank for Jane's default.",
+                    ephemeral=True,
+                )
+                return
         ruleId = await flagService.addRule(
             normalizedRuleType,
             normalizedValue,
             noteText,
             interaction.user.id,
+            severityValue,
         )
+        severityText = f" with severity {severityValue}" if severityValue > 0 else ""
         await interactionRuntime.safeInteractionReply(
             interaction,
-            content=f"Added {normalizedRuleType} rule #{ruleId}.",
+            content=f"Added {normalizedRuleType} rule #{ruleId}{severityText}.",
             ephemeral=True,
         )
 
@@ -466,8 +504,12 @@ class BgFlagCog(commands.Cog):
             title="BG Flag Manager",
             description=(
                 "Use the panel buttons below to manage background-check flags.\n"
+                "Optional severity is a 1-100 minimum score for direct user rules. "
+                "Leave it blank for Jane's default.\n"
                 "Supported rule types:\n"
-                "`group`, `username`, `keyword`, `group_keyword`, `item_keyword`, `item`, `creator`, `badge`"
+                "`group`, `username`, `roblox_user`, `watchlist`, `banned_user`, "
+                "`keyword`, `group_keyword`, `item_keyword`, `game_keyword`, "
+                "`item`, `creator`, `badge`, `game`"
             ),
             color=discord.Color.blurple(),
         )

@@ -28,8 +28,10 @@ from features.staff.sessions import (
 )
 from runtime import (
     auditStream as runtimeAuditStream,
+    botProfile as runtimeBotProfile,
     bootstrap as runtimeBootstrap,
     configSanity as runtimeConfigSanity,
+    commandPermissions as runtimeCommandPermissions,
     extensionLayout as runtimeExtensionLayout,
     errorLogging as runtimeErrorLogging,
     errors as runtimeErrors,
@@ -78,6 +80,7 @@ _lockedPrefixCommandTokens = {
     "?bg-leaderboard",
     "?perm-sim",
     "?permsim",
+    "?ruid"
 }
 _manualTextCommandTokens = _lockedPrefixCommandTokens | {
     "!casinotoggle",
@@ -178,6 +181,8 @@ _errorCoordinator = runtimeErrors.ErrorCoordinator(
 _metricsExporter: runtimeMetricsExport.MetricsExporter | None = None
 _gamblingApiServer: runtimeGamblingApi.GamblingApiServer | None = None
 _trainingLogSyncTask: asyncio.Task | None = None
+_botProfileBioTask: asyncio.Task | None = None
+_botProfileBioStarted = False
 
 
 def _formatUptime(delta: timedelta) -> str:
@@ -299,6 +304,7 @@ _trainingLogCoordinator = trainingLogService.TrainingLogCoordinator(
 
 async def _runTrainingLogStartupSync() -> None:
     await botClient.wait_until_ready()
+    await _trainingLogCoordinator.ensureSummaryPanelAtBottom()
     maxAttempts = 3
     retryDelaySec = 30
     for attempt in range(1, maxAttempts + 1):
@@ -339,6 +345,35 @@ def _startTrainingLogSyncTask() -> None:
             logging.info("Training log backfill task was cancelled.")
         except Exception:
             logging.exception("Training log backfill task crashed.")
+
+    task.add_done_callback(_doneCallback)
+
+
+def _startBotProfileBioTask() -> None:
+    global _botProfileBioTask, _botProfileBioStarted
+    if _botProfileBioStarted:
+        return
+    if _botProfileBioTask is not None and not _botProfileBioTask.done():
+        return
+    _botProfileBioStarted = True
+    task = asyncio.create_task(
+        runtimeBotProfile.updateJaneBioOnStartup(
+            botClient=botClient,
+            configModule=config,
+            taskBudgeter=taskBudgeter,
+            repoRoot=Path(__file__).resolve().parent,
+        ),
+        name="jane-profile-bio-update",
+    )
+    _botProfileBioTask = task
+
+    def _doneCallback(doneTask: asyncio.Task) -> None:
+        try:
+            doneTask.result()
+        except asyncio.CancelledError:
+            logging.info("Jane profile bio update task was cancelled.")
+        except Exception:
+            logging.exception("Jane profile bio update task crashed.")
 
     task.add_done_callback(_doneCallback)
 
@@ -684,6 +719,8 @@ def _getTextCommandRouter() -> runtimeTextCommands.TextCommandRouter:
         )
     return _textCommandRouter
 
+async def _handleUsernameToUserId(message: discord.Message) -> bool:
+    return await _getTextCommandRouter().handleUsernameToUserId(message)
 
 async def _handleJaneHelp(message: discord.Message) -> bool:
     return await _getTextCommandRouter().handleJaneHelp(message)
@@ -790,6 +827,7 @@ async def setup_hook() -> None:
 async def on_ready() -> None:
     await _bootstrapCoordinator.onReady()
     logging.info("on_ready reached; ensuring training log startup sync task is running.")
+    _startBotProfileBioTask()
     _startTrainingLogSyncTask()
 
 
@@ -890,6 +928,19 @@ async def interactionSafetyCheck(interaction: discord.Interaction) -> bool:
         await _safeInteractionSend(
             interaction,
             f"This command is disabled in this server (feature `{featureKey}`).",
+            ephemeral=True,
+        )
+        return False
+    permissionResult = runtimeCommandPermissions.checkInteraction(
+        config,
+        interaction,
+        command=getattr(interaction, "command", None),
+        tree=botClient.tree,
+    )
+    if not permissionResult.allowed:
+        await _safeInteractionSend(
+            interaction,
+            permissionResult.message or "You do not have permission to use this command.",
             ephemeral=True,
         )
         return False
@@ -1124,6 +1175,8 @@ async def on_message(message: discord.Message) -> None:
         if await sillyCommands.handleKillCommand(message, botClient):
             return
         if await sillyCommands.handleCasinoToggleCommand(message):
+            return
+        if await _handleUsernameToUserId(message):
             return
         if await _handleTrainingStatsCommand(message):
             return

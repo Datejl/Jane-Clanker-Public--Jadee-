@@ -15,6 +15,7 @@ import config
 from db.sqlite import fetchAll, fetchOne
 from features.staff.sessions import views as sessionViews
 from runtime import backups as backupRuntime
+from runtime import commandScopes as runtimeCommandScopes
 from runtime import interaction as interactionRuntime
 from runtime import viewBases as runtimeViewBases
 
@@ -688,6 +689,13 @@ class OpsCog(commands.Cog):
 
     @app_commands.command(name="ops", description="Owner-only runtime operations panel.")
     async def ops(self, interaction: discord.Interaction) -> None:
+        if not runtimeCommandScopes.isInteractionInTestGuild(interaction):
+            await interactionRuntime.safeInteractionReply(
+                interaction,
+                content=runtimeCommandScopes.TEST_GUILD_ONLY_MESSAGE,
+                ephemeral=True,
+            )
+            return
         safeUserId = int(getattr(interaction.user, "id", 0) or 0)
         if not self.isAllowedUser(safeUserId):
             await interactionRuntime.safeInteractionReply(
@@ -714,5 +722,5 @@ class OpsCog(commands.Cog):
 
 
 async def setup(bot: commands.Bot) -> None:
-    await bot.add_cog(OpsCog(bot))
+    await bot.add_cog(OpsCog(bot), guilds=runtimeCommandScopes.getTestGuildObjects())
 

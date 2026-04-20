@@ -2,24 +2,24 @@
 
 from typing import Any, Optional
 
-from features.staff.workflows import rendering as workflowRendering
-from features.staff.workflows import service as workflowService
+from features.staff.workflows.bridge import (
+    WorkflowSubjectBridge,
+    normalizedStatus,
+    stateKeyForStatus,
+)
 
 _PROJECT_WORKFLOW_KEY = "projects"
 _PROJECT_SUBJECT_TYPE = "department_project"
+_PROJECT_STATUS_STATES = {
+    "APPROVED": "approved",
+    "DENIED": "denied",
+    "SUBMITTED": "submitted",
+    "FINALIZED": "finalized",
+}
 
 
 def _stateForProjectStatus(status: object) -> str:
-    normalized = str(status or "").strip().upper()
-    if normalized == "APPROVED":
-        return "approved"
-    if normalized == "DENIED":
-        return "denied"
-    if normalized == "SUBMITTED":
-        return "submitted"
-    if normalized == "FINALIZED":
-        return "finalized"
-    return "pending-approval"
+    return stateKeyForStatus(status, _PROJECT_STATUS_STATES, default="pending-approval")
 
 
 def _projectDisplayName(project: dict[str, Any]) -> str:
@@ -37,13 +37,24 @@ def _projectMetadata(project: dict[str, Any]) -> dict[str, Any]:
         "projectId": int(project.get("projectId") or 0),
         "creatorId": int(project.get("creatorId") or 0),
         "title": str(project.get("title") or "").strip(),
-        "status": str(project.get("status") or "").strip().upper(),
+        "status": normalizedStatus(project.get("status")),
         "requestedPoints": int(project.get("requestedPoints") or 0),
         "awardedPoints": int(project.get("awardedPoints") or 0),
         "reviewMessageId": int(project.get("reviewMessageId") or 0),
         "reviewChannelId": int(project.get("reviewChannelId") or 0),
         "threadId": int(project.get("threadId") or 0),
     }
+
+
+_projectBridge = WorkflowSubjectBridge(
+    workflowKey=_PROJECT_WORKFLOW_KEY,
+    subjectType=_PROJECT_SUBJECT_TYPE,
+    subjectIdField="projectId",
+    displayName=_projectDisplayName,
+    metadata=_projectMetadata,
+    stateForStatus=_stateForProjectStatus,
+    missingIdentifiersMessage="Project row is missing workflow identifiers.",
+)
 
 
 async def syncProjectWorkflow(
@@ -55,46 +66,25 @@ async def syncProjectWorkflow(
     eventType: str = "STATE_CHANGE",
     allowNoopEvent: bool = False,
 ) -> dict[str, Any]:
-    projectId = int(project.get("projectId") or 0)
-    guildId = int(project.get("guildId") or 0)
-    if projectId <= 0 or guildId <= 0:
-        raise ValueError("Project row is missing workflow identifiers.")
-
-    return await workflowService.transitionSubjectRun(
-        workflowKey=_PROJECT_WORKFLOW_KEY,
-        subjectType=_PROJECT_SUBJECT_TYPE,
-        subjectId=projectId,
-        guildId=guildId,
-        stateKey=stateKey or _stateForProjectStatus(project.get("status")),
+    return await _projectBridge.sync(
+        project,
+        stateKey=stateKey,
         actorId=actorId,
         note=note,
         eventType=eventType,
-        displayName=_projectDisplayName(project),
-        metadata=_projectMetadata(project),
         allowNoopEvent=allowNoopEvent,
     )
 
 
 async def ensureProjectWorkflowCurrent(project: dict[str, Any]) -> dict[str, Any]:
-    return await syncProjectWorkflow(
+    return await _projectBridge.ensureCurrent(
         project,
-        actorId=None,
         note="Workflow synchronized from project status.",
-        eventType="SYNC",
-        allowNoopEvent=False,
     )
 
 
 async def getProjectWorkflowSummary(project: dict[str, Any]) -> str:
-    run = await workflowService.getRunBySubject(
-        workflowKey=_PROJECT_WORKFLOW_KEY,
-        subjectType=_PROJECT_SUBJECT_TYPE,
-        subjectId=int(project.get("projectId") or 0),
-    )
-    if not run:
-        return ""
-    latestEvent = await workflowService.getLatestRunEvent(int(run["runId"]))
-    return workflowRendering.buildCompactSummary(run, latestEvent)
+    return await _projectBridge.summary(project)
 
 
 async def getProjectWorkflowHistorySummary(
@@ -102,44 +92,11 @@ async def getProjectWorkflowHistorySummary(
     *,
     limit: int = 3,
 ) -> str:
-    run = await workflowService.getRunBySubject(
-        workflowKey=_PROJECT_WORKFLOW_KEY,
-        subjectType=_PROJECT_SUBJECT_TYPE,
-        subjectId=int(project.get("projectId") or 0),
-    )
-    if not run:
-        return ""
-    rows = await workflowService.listRunEvents(int(run["runId"]), limit=max(1, min(int(limit or 3), 5)))
-    if not rows:
-        return ""
-    return workflowRendering.buildWorkflowEventSummary(rows)
+    return await _projectBridge.historySummary(project, limit=limit)
 
 
 async def reconcileProjectWorkflowRows(rows: list[dict[str, Any]]) -> tuple[int, int]:
-    checked = 0
-    changed = 0
-    for row in rows:
-        projectId = int(row.get("projectId") or 0)
-        guildId = int(row.get("guildId") or 0)
-        if projectId <= 0 or guildId <= 0:
-            continue
-        checked += 1
-        existingRun = await workflowService.getRunBySubject(
-            workflowKey=_PROJECT_WORKFLOW_KEY,
-            subjectType=_PROJECT_SUBJECT_TYPE,
-            subjectId=projectId,
-        )
-        beforeUpdatedAt = str(existingRun.get("updatedAt") or "").strip() if existingRun else ""
-        await ensureProjectWorkflowCurrent(row)
-        afterRun = await workflowService.getRunBySubject(
-            workflowKey=_PROJECT_WORKFLOW_KEY,
-            subjectType=_PROJECT_SUBJECT_TYPE,
-            subjectId=projectId,
-        )
-        afterUpdatedAt = str(afterRun.get("updatedAt") or "").strip() if afterRun else ""
-        if existingRun is None or afterUpdatedAt != beforeUpdatedAt:
-            changed += 1
-    return checked, changed
+    return await _projectBridge.reconcileRows(rows, ensureFn=ensureProjectWorkflowCurrent)
 
 __all__ = [
     "ensureProjectWorkflowCurrent",

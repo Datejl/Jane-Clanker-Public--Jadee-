@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 from dotenv import load_dotenv, find_dotenv
 
 load_dotenv(find_dotenv(), override=True)
+
+# Config editing guide:
+# - Secrets and tokens should come from `.env` through `_envText` / `_envFlag`.
+# - Shared guild IDs and role IDs live near the top because many feature sections reference them.
+# - Feature-specific channels, role allowlists, quotas, and tuning live in that feature's section.
+# - Test-only command scopes should use `testGuildIds` so both test servers stay in sync.
+
 
 def _envText(name: str, default: str = "") -> str:
     return str(os.getenv(name, default) or default).strip()
@@ -25,23 +31,27 @@ token = _envText("DISCORD_BOT_TOKEN")
 # Primary servers.
 serverId = 0
 serverIdTesting = 0
+testGuildIds = []
 
 
 # == Credentials / External APIs ==
 # Keep API keys and credential paths in `.env`, not in versioned config.
+# Roblox, RoVer, and Sheets credentials.
 robloxOpenCloudApiKey = _envText("ROBLOX_OPEN_CLOUD_API_KEY")
 roverApiKey = _envText("ROVER_API_KEY")
 orbatGoogleCredentialsPath = _envText("ORBAT_GOOGLE_CREDENTIALS_PATH")
+googleOauthClientSecretsPath = _envText("GOOGLE_OAUTH_CLIENT_SECRETS_PATH")
+googleOauthTokenPath = _envText("GOOGLE_OAUTH_TOKEN_PATH", "localOnly/credentials/google-oauth-token.json")
 
 # Optional dedicated inventory key.
 robloxInventoryApiKey = _envText("ROBLOX_INVENTORY_API_KEY", robloxOpenCloudApiKey)
 
-skinCooldownBypassRoleIds = []
-
+# Feature-specific external service credentials.
+bgIntelligenceTaseApiToken = _envText("TASE_API_TOKEN")
+bgIntelligenceMocoApiKey = _envText("MOCO_API_KEY")
+gamblingApiToken = _envText("JANE_GAMBLING_API_TOKEN")
 freedcampApiKey = _envText("FREEDCAMP_API_KEY")
 freedcampSecret = _envText("FREEDCAMP_SECRET")
-freedcampProjectId = 0
-freedcampTaskGroupId = 0
 
 # == Command Access / Runtime ==
 # Allowed servers for command usage.
@@ -49,7 +59,6 @@ allowedCommandGuildIds = []
 
 # Reserved runtime override users.
 overridingUserIds = []
-
 # Command sync toggles.
 clearGlobalCommands = False
 clearGuildCommands = False
@@ -62,6 +71,7 @@ temporaryCommandAllowedUserIds = []
 errorMirrorUserId = 0
 janeTerminalAllowedUserId = errorMirrorUserId
 opsAllowedUserIds = []
+runtimeControlAllowedUserIds = []
 permissionSimulatorGuildIds = []
 
 # Runtime task tuning.
@@ -75,6 +85,7 @@ webhookHealthCheckIntervalSec = 600
 generalErrorLogDir = ""
 generalErrorLogMaxBytes = 2 * 1024 * 1024
 generalErrorLogBackupCount = 5
+automationReportChannelId = 0
 autoGitUpdateEnabled = False
 enablePrivateExtensions = False
 enableDestructiveCommands = False
@@ -108,25 +119,6 @@ configSanityOptionalIdKeys = [
 ]
 
 
-# == Voice Chat ==
-_canCreateVoiceChatAll = [
-    1376949919100698814,
-    1376949984750206986,
-    1383522027251699772,
-    1470914397424717825,
-]
-
-_canCreateVoiceChatBasic = [
-    1376949919100698814,
-    1376949984750206986,
-    1383522027251699772,
-    1456604223407001601,
-]
-
-voiceChannelCreationCategory = 1481169790990029002
-permanentVoiceChatChannelIds = []
-
-
 # == Shared Role IDs ==
 # Core moderation / training roles.
 moderatorRoleId = 0  # BG Check Certified
@@ -150,8 +142,9 @@ juniorSuRoleId = 0
 msbRoleId = 0
 
 # Recruitment / ANRORS roles.
-recruiterRoleId = 0  # ANRO Recruitment Services
-recruitmentReviewerRoleId = 0  # Dept. ORBAT Access
+recruiterRoleId = 0  # CE Recruitment submitter role
+recruitmentReviewerRoleId = 0
+recruitmentReviewerPingRoleId = 0
 anrorsMemberRoleId = 0  # ANRO Recruitment Services
 anrorsRmPlusRoleId = 0  # ANRORS RM+
 
@@ -185,9 +178,69 @@ bgAdultAgeGroups = ["18-20", "21+"]
 bgUnknownDefaultsToMinor = True
 # Source guild for ?bgcheck member collection (defaults to serverId when unset).
 bgCheckSourceGuildId = serverId
+bgCheckSpreadsheetTemplateId = _envText(
+    "BGC_SPREADSHEET_TEMPLATE_ID",
+    "",
+)
+bgCheckSpreadsheetFolderId = _envText(
+    "BGC_SPREADSHEET_FOLDER_ID",
+    "",
+)
+bgCheckSpreadsheetSheetName = _envText("BGC_SPREADSHEET_SHEET_NAME", "Sheet1")
+bgRiskScoreBase = 20
+bgRiskScoreFloor = 5
+bgIntelligenceFetchGroupsEnabled = True
+bgIntelligenceFetchConnectionsEnabled = True
+bgIntelligenceFetchInventoryEnabled = True
+bgIntelligenceFetchGamepassesEnabled = True
+bgIntelligenceFetchBadgesEnabled = True
+bgIntelligenceFetchFavoriteGamesEnabled = True
+bgIntelligenceFetchOutfitsEnabled = True
+bgIntelligenceFetchBadgeHistoryEnabled = True
+bgIntelligenceExternalSourcesEnabled = True
+bgIntelligenceTaseEnabled = True
+bgIntelligenceTaseApiBaseUrl = "https://api.tasebot.org"
+bgIntelligenceTaseTimeoutSec = 10
+bgIntelligenceMocoEnabled = True
+bgIntelligenceMocoApiBaseUrl = "https://api.moco-co.org"
+bgIntelligenceMocoTimeoutSec = 10
+bgIntelligenceFavoriteGameMax = 25
+bgIntelligenceOutfitMax = 25
+bgIntelligenceInventoryMaxPages = 0
+bgIntelligenceInventoryHardMaxPages = 100
+bgIntelligencePublicInventoryMaxPagesPerType = 10
+bgIntelligenceGamepassMaxPages = 0
+bgIntelligenceGamepassHardMaxPages = 100
+bgIntelligenceBadgeHistoryPageSize = 100
+bgIntelligenceBadgeHistoryMaxPages = 0
+bgIntelligenceBadgeHistoryHardMaxPages = 100
+bgIntelligencePrivateInventoryDmEnabled = True
+robloxApiCacheMaxEntries = 5000
+robloxProfileCacheTtlSec = 86400
+robloxGroupCacheTtlSec = 3600
+robloxConnectionCacheTtlSec = 3600
+robloxFavoriteGamesCacheTtlSec = 3600
+robloxOutfitCacheTtlSec = 3600
+robloxInventoryValueCacheTtlSec = 21600
+robloxGamepassCacheTtlSec = 21600
+robloxAssetPriceCacheTtlSec = 86400
+robloxGamepassProductCacheTtlSec = 86400
+robloxBadgeHistoryCacheTtlSec = 86400
+robloxBadgeAwardCacheTtlSec = 86400
+robloxBadgeAwardLookupConcurrency = 1
+robloxBadgeAwardLookupDelaySec = 0.5
 trainingResultsChannelId = 0
 startupGreetingChannelId = 0
 bgFailureForumChannelId = 0
+
+# Training log mirror and John event ingest.
+johnTrainingLogChannelId = 0
+trainingArchiveChannelId = johnTrainingLogChannelId
+trainingLogBackfillDays = 365
+trainingSummaryWebhookName = "Jane Training Summary"
+trainingMirrorWebhookName = "Jane Training Log"
+johnEventLogChannelId = 0
+johnClankerBotId = 0
 
 
 # == Public Utility / Suggestions ==
@@ -198,6 +251,10 @@ publicRoleMenus = {}
 suggestionChannelId = 0
 suggestionForumChannelId = 0
 suggestionReviewerRoleIds = []
+
+# Optional Freedcamp task creation when suggestions are approved.
+freedcampProjectId = 0
+freedcampTaskGroupId = 0
 
 
 # == Server Safety / Recovery ==
@@ -215,7 +272,6 @@ serverSafetyPreservedChannelIds = []
 serverSafetyQuarantineThreshold = 5
 serverSafetyQuarantineWindowSec = 30
 serverSafetyAllowedUserIds = []
-runtimeControlAllowedUserIds = []
 
 
 # == Project Workflow ==
@@ -296,6 +352,8 @@ orbatLoaRoleMap = {
 }
 
 # ORBAT columns (A1 notation).
+# The current General Staff workbook has no Discord ID column. Keep this blank
+# so Jane does not treat the strike/status column as a Discord ID field.
 orbatColumnDiscordId = 0
 orbatColumnRobloxUser = "B"
 orbatColumnRank = "D"
@@ -530,8 +588,13 @@ googleSheetsRetryBaseSec = 1.5
 
 # == Recruitment / ANRORS ==
 recruitmentChannelId = 0
+recruitmentTimeLogReviewChannelId = 0
+recruitmentPatrolReviewChannelId = 0
+recruitmentPatrolEvidenceChannelId = 0
+recruitmentCommandGuildIds = []
+recruitmentSourceGuildId = serverId
 
-# Optional: roles allowed to host /recruitment-patrol group.
+# Optional: roles allowed to host /recruitment-patrol.
 # If empty, this falls back to recruiterRoleId permission.
 recruitmentPatrolGroupHostRoleIds = []
 
@@ -663,6 +726,25 @@ cohostSlotsGrid = 4
 cohostSlotsShift = 2
 
 
+# == Voice Chat ==
+_canCreateVoiceChatAll = [
+    1376949919100698814,
+    1376949984750206986,
+    1383522027251699772,
+    1470914397424717825,
+]
+
+_canCreateVoiceChatBasic = [
+    1376949919100698814,
+    1376949984750206986,
+    1383522027251699772,
+    1456604223407001601,
+]
+
+voiceChannelCreationCategory = 1481169790990029002
+permanentVoiceChatChannelIds = []
+
+
 # == Roblox / RoVer ==
 robloxGroupId = 0
 robloxGroupUrl = "https://www.roblox.com/communities/36000077/ANRO-Advanced-Noobic-Reactor-Operations#!/about"
@@ -691,7 +773,7 @@ robloxGroupScanCacheDays = 7
 # Badge scan.
 robloxBadgeScanEnabled = True
 robloxBadgeScanCacheDays = 7
-robloxBadgeScanBatchSize = 50
+robloxBadgeScanBatchSize = 100
 robloxBadgeImportMax = 200
 
 # Outfit viewer.
@@ -712,24 +794,13 @@ robloxInventoryScanMaxPages = 5
 gamblingApiEnabled = True
 gamblingApiHost = "0.0.0.0"
 gamblingApiPort = 8787
-gamblingApiToken = _envText("JANE_GAMBLING_API_TOKEN")
 gamblingApiMaxConcurrency = 8
 gamblingPointsToDollarRate = 5  # 1 point => 5 anrobucks
 
 
-# == Automation / Logs ==
-automationReportChannelId = 0
-johnTrainingLogChannelId = 0
-trainingArchiveChannelId = johnTrainingLogChannelId
-trainingLogBackfillDays = 365
-trainingSummaryWebhookName = "Jane Training Summary"
-trainingMirrorWebhookName = "Jane Training Log"
-johnEventLogChannelId = 0
-johnClankerBotId = 0
-
-
 # == Hidden / Misc ==
 skinAllowedUserIds = []
+skinCooldownBypassRoleIds = []
 
 
 # == Organization Profiles ==
@@ -741,12 +812,15 @@ organizationCommandFeatureMap = {
     "orientation": "anro-sessions",
     "bg-check": "anro-bgc",
     "bgcheck": "anro-bgc",
+    "bg-intel": "anro-bgc",
     "trainingstats": "anro-training-logs",
     "hoststats": "anro-training-logs",
     "mirrortraininghistory": "anro-training-logs",
     "bgleaderboard": "anro-bgc",
     "bg-leaderboard": "anro-bgc",
     "recruitment": "anro-recruitment",
+    "recruitment-time-log": "anro-recruitment",
+    "recruitment-patrol": "anro-recruitment",
     "orbat": "anro-orbat",
     "orbat-request": "anro-orbat",
     "orbat-pending": "anro-orbat",
@@ -793,6 +867,9 @@ organizationProfiles = {
         "bgCheckMinorReviewRoleId": bgCheckMinorReviewRoleId,
         "bgCheckMinorReviewRoleIds": list(bgCheckMinorReviewRoleIds),
         "bgCheckSourceGuildId": bgCheckSourceGuildId,
+        "bgCheckSpreadsheetTemplateId": bgCheckSpreadsheetTemplateId,
+        "bgCheckSpreadsheetFolderId": bgCheckSpreadsheetFolderId,
+        "bgCheckSpreadsheetSheetName": bgCheckSpreadsheetSheetName,
         "bgMinorAgeRoleIds": list(bgMinorAgeRoleIds),
         "bgMajorAgeRoleIds": list(bgMajorAgeRoleIds),
         "bgMinorAgeGroups": list(bgMinorAgeGroups),

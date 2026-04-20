@@ -1267,7 +1267,20 @@ class TrainingLogCoordinator:
                 reason="Training summary refresh",
             )
             if sentMessage is None:
-                return
+                try:
+                    sentMessage = await self.taskBudgeter.runDiscord(
+                        lambda: archiveChannel.send(
+                            embed=embed,
+                            allowed_mentions=discord.AllowedMentions(users=False, roles=False, everyone=False),
+                        )
+                    )
+                except (discord.Forbidden, discord.HTTPException):
+                    log.warning(
+                        "Training summary send failed: org=%s archive channel %s.",
+                        str(orgKey or "").strip().upper() or "UNKNOWN",
+                        int(getattr(archiveChannel, "id", 0) or 0),
+                    )
+                    return
             if oldMessage is not None and int(oldMessage.id or 0) != int(sentMessage.id or 0):
                 await self._deleteSummaryMessage(message=oldMessage, orgKey=str(orgKey))
             try:

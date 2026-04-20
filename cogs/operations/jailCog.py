@@ -11,7 +11,9 @@ from discord.ext import commands
 import config
 from features.operations.jail import service as jailService
 from runtime import cogGuards as runtimeCogGuards
+from runtime import commandScopes as runtimeCommandScopes
 from runtime import interaction as interactionRuntime
+
 log = logging.getLogger(__name__)
 
 _defaultJailedRoleId = 1477066703564177510
@@ -176,6 +178,8 @@ class JailCog(runtimeCogGuards.InteractionGuardMixin, commands.Cog):
         member = await self._requireAdministrator(interaction)
         if member is None:
             return
+        if not await self._requireTestGuild(interaction):
+            return
 
         guild = interaction.guild
         botMember = guild.me
@@ -281,6 +285,8 @@ class JailCog(runtimeCogGuards.InteractionGuardMixin, commands.Cog):
         member = await self._requireAdministrator(interaction)
         if member is None:
             return
+        if not await self._requireTestGuild(interaction):
+            return
 
         guild = interaction.guild
         botMember = guild.me
@@ -363,4 +369,4 @@ class JailCog(runtimeCogGuards.InteractionGuardMixin, commands.Cog):
 
 
 async def setup(bot: commands.Bot) -> None:
-    await bot.add_cog(JailCog(bot))
+    await bot.add_cog(JailCog(bot), guilds=runtimeCommandScopes.getTestGuildObjects())

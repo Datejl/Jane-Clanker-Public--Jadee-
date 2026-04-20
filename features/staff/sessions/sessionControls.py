@@ -135,7 +135,7 @@ class JoinPasswordModal(ui.Modal, title="Enter Password"):
         if session.get("maxAttendeeLimit") <= attendeeCount:
             return await _safeInteractionReply(
                 interaction,
-                content="This orientation has reached its attendee limit, try your luck next time!", 
+                content="This orientation has reached its attendee limit, try your luck next time!",
                 ephemeral=True,
             )
 
@@ -349,7 +349,7 @@ class SessionView(ui.View):
         if session.get("maxAttendeeLimit") <= attendeeCount:
             return await _safeInteractionReply(
                 interaction,
-                "This orientation has reached its attendee limit, try your luck next time!", 
+                "This orientation has reached its attendee limit, try your luck next time!",
                 ephemeral=True,
             )
         if not _canClockIn(interaction.user):

@@ -11,6 +11,18 @@ log = logging.getLogger(__name__)
 
 _MISSING = object()
 _retrySafeLayerInstalled = False
+_SAFE_DISCORD_EXCEPTIONS = (discord.NotFound, discord.Forbidden, discord.HTTPException)
+_SAFE_CALLER_EXCEPTIONS = (AttributeError, TypeError)
+_SAFE_MESSAGE_DELETE_EXCEPTIONS = _SAFE_DISCORD_EXCEPTIONS + (AttributeError,)
+_SAFE_CHANNEL_SEND_EXCEPTIONS = _SAFE_DISCORD_EXCEPTIONS + _SAFE_CALLER_EXCEPTIONS
+
+
+def _logSafeFailure(action: str, exc: Exception) -> None:
+    log.debug("Discord %s failed safely: %s", action, exc)
+
+
+def _shouldRetryReplyWithoutView(exc: TypeError) -> bool:
+    return "view" in str(exc).lower()
 
 
 def isUnknownInteractionError(exc: Exception) -> bool:
@@ -35,7 +47,8 @@ async def safeInteractionDefer(
     try:
         await interaction.response.defer(ephemeral=ephemeral, thinking=thinking)
         return True
-    except (discord.NotFound, discord.HTTPException):
+    except (discord.NotFound, discord.HTTPException) as exc:
+        _logSafeFailure("interaction defer", exc)
         return False
 
 
@@ -75,16 +88,21 @@ async def safeInteractionReply(
         return True
     except TypeError as exc:
         # Common case: unsupported kwargs for a specific response path.
-        if "view" in kwargs:
+        if "view" in kwargs and _shouldRetryReplyWithoutView(exc):
             kwargs.pop("view", None)
             try:
                 await _dispatch()
                 return True
-            except Exception:
-                pass
+            except TypeError as retryExc:
+                log.warning("Interaction reply type error after dropping view: %s", retryExc)
+                return False
+            except (discord.NotFound, discord.HTTPException) as retryExc:
+                _logSafeFailure("interaction reply retry", retryExc)
+                return False
         log.warning("Interaction reply type error: %s", exc)
         return False
-    except (discord.NotFound, discord.HTTPException):
+    except (discord.NotFound, discord.HTTPException) as exc:
+        _logSafeFailure("interaction reply", exc)
         return False
 
 
@@ -104,7 +122,8 @@ async def safeInteractionSendModal(
     try:
         await interaction.response.send_modal(modal)
         return True
-    except (discord.NotFound, discord.HTTPException):
+    except (discord.NotFound, discord.HTTPException) as exc:
+        _logSafeFailure("interaction modal", exc)
         return False
 
 
@@ -112,8 +131,39 @@ async def safeMessageEdit(message: discord.Message, **kwargs: Any) -> bool:
     try:
         await taskBudgeter.runDiscord(lambda: message.edit(**kwargs))
         return True
-    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+    except _SAFE_DISCORD_EXCEPTIONS as exc:
+        _logSafeFailure("message edit", exc)
         return False
+
+
+async def safeMessageDelete(message: discord.Message) -> bool:
+    try:
+        await taskBudgeter.runDiscord(lambda: message.delete())
+        return True
+    except _SAFE_MESSAGE_DELETE_EXCEPTIONS as exc:
+        _logSafeFailure("message delete", exc)
+        return False
+
+
+async def safeChannelSend(channel: Any, **kwargs: Any) -> discord.Message | None:
+    try:
+        return await taskBudgeter.runDiscord(lambda: channel.send(**kwargs))
+    except _SAFE_CHANNEL_SEND_EXCEPTIONS as exc:
+        _logSafeFailure("channel send", exc)
+        return None
+
+
+def _makeRetrySafeResponseMethod(originalMethod: Any, action: str) -> Any:
+    async def _patched(self: discord.InteractionResponse, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return await taskBudgeter.runDiscord(lambda: originalMethod(self, *args, **kwargs))
+        except (discord.NotFound, discord.HTTPException) as exc:
+            if isUnknownInteractionError(exc):
+                _logSafeFailure(action, exc)
+                return None
+            raise
+
+    return _patched
 
 
 def installRetrySafeInteractionLayer() -> None:
@@ -125,32 +175,17 @@ def installRetrySafeInteractionLayer() -> None:
     originalDefer = discord.InteractionResponse.defer
     originalSendModal = discord.InteractionResponse.send_modal
 
-    async def _patchedSendMessage(self: discord.InteractionResponse, *args: Any, **kwargs: Any):
-        try:
-            return await taskBudgeter.runDiscord(lambda: originalSendMessage(self, *args, **kwargs))
-        except (discord.NotFound, discord.HTTPException) as exc:
-            if isUnknownInteractionError(exc):
-                return None
-            raise
-
-    async def _patchedDefer(self: discord.InteractionResponse, *args: Any, **kwargs: Any):
-        try:
-            return await taskBudgeter.runDiscord(lambda: originalDefer(self, *args, **kwargs))
-        except (discord.NotFound, discord.HTTPException) as exc:
-            if isUnknownInteractionError(exc):
-                return None
-            raise
-
-    async def _patchedSendModal(self: discord.InteractionResponse, *args: Any, **kwargs: Any):
-        try:
-            return await taskBudgeter.runDiscord(lambda: originalSendModal(self, *args, **kwargs))
-        except (discord.NotFound, discord.HTTPException) as exc:
-            if isUnknownInteractionError(exc):
-                return None
-            raise
-
-    discord.InteractionResponse.send_message = _patchedSendMessage  # type: ignore[assignment]
-    discord.InteractionResponse.defer = _patchedDefer  # type: ignore[assignment]
-    discord.InteractionResponse.send_modal = _patchedSendModal  # type: ignore[assignment]
+    discord.InteractionResponse.send_message = _makeRetrySafeResponseMethod(  # type: ignore[assignment]
+        originalSendMessage,
+        "interaction response send_message",
+    )
+    discord.InteractionResponse.defer = _makeRetrySafeResponseMethod(  # type: ignore[assignment]
+        originalDefer,
+        "interaction response defer",
+    )
+    discord.InteractionResponse.send_modal = _makeRetrySafeResponseMethod(  # type: ignore[assignment]
+        originalSendModal,
+        "interaction response send_modal",
+    )
 
     _retrySafeLayerInstalled = True

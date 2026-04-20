@@ -12,21 +12,19 @@ from cogs.staff.recruitmentViews import (
     GroupPatrolManageModal,
     GroupPatrolView,
     RecruitmentReviewView,
-    SoloPatrolDetailsModal,
 )
 from features.staff.clockins import ClockinEngine, resolveAttendeeUserIdFromToken
 from features.staff.clockins.recruitmentPatrolAdapter import RecruitmentPatrolAdapter
 import config
 from features.staff.recruitment import rendering as recruitmentRendering
 from features.staff.recruitment import service as recruitmentService
+from runtime import commandScopes as runtimeCommandScopes
 from runtime import interaction as interactionRuntime
+from runtime import normalization
+from runtime import permissions as runtimePermissions
 
 
 log = logging.getLogger(__name__)
-patrolTypeChoices = [
-    app_commands.Choice(name="Solo", value="solo"),
-    app_commands.Choice(name="Group", value="group"),
-]
 
 
 def _isImageAttachment(attachment: discord.Attachment) -> bool:
@@ -45,22 +43,30 @@ def _patrolPoints(durationMinutes: int) -> int:
 
 
 def _hasRole(member: discord.Member, roleId: Optional[int]) -> bool:
-    if not roleId:
-        return False
-    return any(role.id == int(roleId) for role in member.roles)
+    return runtimePermissions.hasAnyRole(member, [roleId])
 
 
 def _normalizeRoleIdList(rawValues) -> set[int]:
-    out: set[int] = set()
-    for value in rawValues or []:
-        try:
-            out.add(int(value))
-        except (TypeError, ValueError):
-            continue
-    return out
+    return normalization.normalizeIntSet(rawValues)
+
+
+def _positiveInt(value: object) -> int:
+    return normalization.toPositiveInt(value)
+
+
+def _parseUserIdInput(value: object) -> int:
+    return normalization.parseDiscordUserId(value)
+
 
 def _reviewerMention() -> str:
-    roleId = int(getattr(config, "recruitmentReviewerRoleId", 0) or 0)
+    roleId = int(
+        getattr(
+            config,
+            "recruitmentReviewerPingRoleId",
+            getattr(config, "recruitmentReviewerRoleId", 0),
+        )
+        or 0
+    )
     if roleId > 0:
         return f"<@&{roleId}>"
     return ""
@@ -121,21 +127,69 @@ class RecruitmentCog(commands.Cog):
             return any(role.id in configuredRoleIds for role in member.roles)
         return self._canSubmitRecruitment(member)
 
+    def _recruitmentCommandGuildIds(self) -> set[int]:
+        return _normalizeRoleIdList(getattr(config, "recruitmentCommandGuildIds", []))
+
+    async def _ensureRecruitmentCommandGuild(self, interaction: discord.Interaction) -> bool:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "This command can only be used in a server channel.",
+                ephemeral=True,
+            )
+            return False
+        allowedGuildIds = self._recruitmentCommandGuildIds()
+        if int(interaction.guild.id) in allowedGuildIds:
+            return True
+        await interaction.response.send_message(
+            "Recruitment commands can only be used in the CE server or configured test servers.",
+            ephemeral=True,
+        )
+        return False
+
+    async def _fetchMainAnroMember(self, userId: int) -> Optional[discord.Member]:
+        sourceGuildId = _positiveInt(getattr(config, "recruitmentSourceGuildId", getattr(config, "serverId", 0)))
+        if sourceGuildId <= 0 or int(userId or 0) <= 0:
+            return None
+        guild = self.bot.get_guild(sourceGuildId)
+        if guild is None:
+            try:
+                guild = await self.bot.fetch_guild(sourceGuildId)
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                return None
+        member = guild.get_member(int(userId))
+        if member is not None:
+            return member
+        try:
+            return await guild.fetch_member(int(userId))
+        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+            return None
+
+    @staticmethod
+    def _memberDisplayName(member: discord.Member) -> str:
+        return str(
+            getattr(member, "display_name", None)
+            or getattr(member, "global_name", None)
+            or getattr(member, "name", None)
+            or member.id
+        ).strip()
+
     async def _resolveReviewChannel(
         self,
         guild: discord.Guild,
         fallback: Optional[discord.abc.Messageable],
+        *,
+        channelId: Optional[int] = None,
     ) -> Optional[discord.abc.Messageable]:
-        channelId = int(getattr(config, "recruitmentChannelId", 0) or 0)
-        if channelId > 0:
+        targetChannelId = int(channelId or getattr(config, "recruitmentChannelId", 0) or 0)
+        if targetChannelId > 0:
             # Use client-level channel resolution so review channels can live
             # outside the invoking guild (cross-server review setup).
-            channel = self.bot.get_channel(channelId)
+            channel = self.bot.get_channel(targetChannelId)
             if channel is None:
-                channel = guild.get_channel(channelId)
+                channel = guild.get_channel(targetChannelId)
             if channel is None:
                 try:
-                    channel = await self.bot.fetch_channel(channelId)
+                    channel = await self.bot.fetch_channel(targetChannelId)
                 except (discord.Forbidden, discord.NotFound, discord.HTTPException, discord.InvalidData):
                     channel = None
             if channel is not None:
@@ -151,8 +205,13 @@ class RecruitmentCog(commands.Cog):
         view: discord.ui.View,
         extraContent: Optional[str] = None,
         files: Optional[list[discord.File]] = None,
+        reviewChannelId: Optional[int] = None,
     ) -> Optional[discord.Message]:
-        channel = await self._resolveReviewChannel(guild, fallbackChannel)
+        channel = await self._resolveReviewChannel(
+            guild,
+            fallbackChannel,
+            channelId=reviewChannelId,
+        )
         if not isinstance(channel, (discord.TextChannel, discord.Thread)):
             return None
         mention = _reviewerMention()
@@ -175,6 +234,25 @@ class RecruitmentCog(commands.Cog):
             )
         except (discord.Forbidden, discord.HTTPException):
             return None
+
+    async def _resolveConfiguredMessageChannel(
+        self,
+        guild: discord.Guild,
+        channelId: int,
+    ) -> Optional[discord.abc.Messageable]:
+        if int(channelId or 0) <= 0:
+            return None
+        channel = self.bot.get_channel(int(channelId))
+        if channel is None:
+            channel = guild.get_channel(int(channelId))
+        if channel is None:
+            try:
+                channel = await self.bot.fetch_channel(int(channelId))
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException, discord.InvalidData):
+                return None
+        if isinstance(channel, (discord.TextChannel, discord.Thread)):
+            return channel
+        return None
 
     async def _collectTwoImageEvidenceMessage(
         self,
@@ -394,14 +472,32 @@ class RecruitmentCog(commands.Cog):
                     ephemeral=True,
                 )
                 return
+            evidenceChannelId = int(
+                getattr(
+                    config,
+                    "recruitmentPatrolEvidenceChannelId",
+                    getattr(config, "recruitmentChannelId", 0),
+                )
+                or 0
+            )
+            evidenceChannel = await self._resolveConfiguredMessageChannel(
+                interaction.guild,
+                evidenceChannelId,
+            )
+            if evidenceChannel is None:
+                await interaction.response.send_message(
+                    "Could not resolve the configured patrol screenshot channel.",
+                    ephemeral=True,
+                )
+                return
 
             await interaction.response.send_message(
-                "Upload two patrol screenshots in your next message in this channel within 3 minutes.",
+                f"Upload two patrol screenshots in <#{evidenceChannelId}> within 3 minutes.",
                 ephemeral=True,
             )
             # We reuse the evidence collector so solo/group flows behave the same.
             evidenceMessage = await self._collectTwoImageEvidenceMessage(
-                channel=channel,
+                channel=evidenceChannel,
                 userId=interaction.user.id,
             )
             if evidenceMessage is None:
@@ -444,6 +540,7 @@ class RecruitmentCog(commands.Cog):
                 fallbackChannel=interaction.channel,
                 embed=embed,
                 view=reviewView,
+                reviewChannelId=int(getattr(config, "recruitmentPatrolReviewChannelId", 0) or 0),
             )
             if not reviewMessage:
                 await interaction.followup.send(
@@ -466,25 +563,22 @@ class RecruitmentCog(commands.Cog):
 
     @app_commands.command(name="recruitment", description="Submit a recruitment log.")
     @app_commands.describe(
-        recruit="Member you recruited.",
+        user_id="Discord user ID of the user you recruited.",
         image="Primary screenshot proof.",
         extra_image="Second screenshot proof.",
     )
+    @app_commands.rename(user_id="user-id")
     @app_commands.rename(extra_image="extra-image")
     async def recruitment(
         self,
         interaction: discord.Interaction,
-        recruit: discord.Member,
+        user_id: str,
         image: discord.Attachment,
         extra_image: discord.Attachment,
     ) -> None:
-        if not interaction.guild or not interaction.channel:
-            await interaction.response.send_message(
-                "This command can only be used in a server channel.",
-                ephemeral=True,
-            )
+        if not await self._ensureRecruitmentCommandGuild(interaction):
             return
-        if not isinstance(interaction.user, discord.Member):
+        if not interaction.channel or not isinstance(interaction.user, discord.Member):
             await interaction.response.send_message(
                 "This command can only be used in a server channel.",
                 ephemeral=True,
@@ -493,6 +587,14 @@ class RecruitmentCog(commands.Cog):
         if not self._canSubmitRecruitment(interaction.user):
             await interaction.response.send_message(
                 "You do not have permission to submit recruitment logs.",
+                ephemeral=True,
+            )
+            return
+
+        recruitUserId = _parseUserIdInput(user_id)
+        if recruitUserId <= 0:
+            await interaction.response.send_message(
+                "Please provide a valid Discord user ID for the recruited user.",
                 ephemeral=True,
             )
             return
@@ -508,15 +610,24 @@ class RecruitmentCog(commands.Cog):
             return
 
         await interaction.response.defer(ephemeral=True, thinking=True)
+        recruitMember = await self._fetchMainAnroMember(recruitUserId)
+        if recruitMember is None:
+            await interaction.followup.send(
+                "That user ID is incorrect, or that user is not in the ANRO server.",
+                ephemeral=True,
+            )
+            return
+
         basePoints = int(getattr(config, "recruitmentPointsBase", 2) or 2)
         submissionId = await recruitmentService.createRecruitmentSubmission(
             guildId=interaction.guild.id,
             channelId=interaction.channel.id,
             submitterId=interaction.user.id,
-            recruitUserId=recruit.id,
+            recruitUserId=recruitUserId,
             passedOrientation=False,
             imageUrls=imageUrls,
             points=basePoints,
+            recruitDisplayName=self._memberDisplayName(recruitMember),
         )
         submission = await recruitmentService.getRecruitmentSubmission(submissionId)
         if not submission:
@@ -544,6 +655,7 @@ class RecruitmentCog(commands.Cog):
             view=view,
             extraContent=None if imageFiles else "\n".join(imageUrls),
             files=imageFiles,
+            reviewChannelId=int(getattr(config, "recruitmentChannelId", 0) or 0),
         )
         if not reviewMessage:
             await interaction.followup.send(
@@ -564,7 +676,9 @@ class RecruitmentCog(commands.Cog):
         *,
         durationMinutes: int,
         imageUrls: list[str],
+        imageFiles: Optional[list[discord.File]] = None,
         evidenceMessageUrl: Optional[str] = None,
+        reviewChannelId: Optional[int] = None,
     ) -> None:
         points = _patrolPoints(int(durationMinutes))
         submissionId = await recruitmentService.createRecruitmentTimeSubmission(
@@ -594,6 +708,12 @@ class RecruitmentCog(commands.Cog):
                 value=f"[Open message]({evidenceMessageUrl})",
                 inline=False,
             )
+        elif imageFiles:
+            embed.add_field(
+                name="Evidence",
+                value="Attached screenshots.",
+                inline=False,
+            )
         else:
             embed.add_field(
                 name="Evidence",
@@ -606,6 +726,8 @@ class RecruitmentCog(commands.Cog):
             fallbackChannel=interaction.channel,
             embed=embed,
             view=view,
+            files=imageFiles or [],
+            reviewChannelId=reviewChannelId or int(getattr(config, "recruitmentTimeLogReviewChannelId", 0) or 0),
         )
         if not reviewMessage:
             await interaction.followup.send(
@@ -624,6 +746,7 @@ class RecruitmentCog(commands.Cog):
             guildId=interaction.guild.id,
             channelId=interaction.channel.id,
             hostId=interaction.user.id,
+            maxAttendeeLimit=int(getattr(config, "recruitmentPatrolMaxAttendeeLimit", 30) or 30),
         )
         patrol = await self._groupPatrolEngine.getSession(int(patrolId))
         if not patrol:
@@ -653,13 +776,9 @@ class RecruitmentCog(commands.Cog):
         interaction: discord.Interaction,
         durationMinutes: int,
     ) -> None:
-        if not interaction.guild or not interaction.channel:
-            await interaction.response.send_message(
-                "This command can only be used in a server channel.",
-                ephemeral=True,
-            )
+        if not await self._ensureRecruitmentCommandGuild(interaction):
             return
-        if not isinstance(interaction.user, discord.Member):
+        if not interaction.channel or not isinstance(interaction.user, discord.Member):
             await interaction.response.send_message(
                 "This command can only be used in a server channel.",
                 ephemeral=True,
@@ -701,43 +820,26 @@ class RecruitmentCog(commands.Cog):
             evidenceMessageUrl=evidenceMessage.jump_url,
         )
 
-    @app_commands.command(name="recruitment-patrol", description="Create a solo or group recruitment patrol.")
-    @app_commands.describe(patrol_type="Select patrol type.")
-    @app_commands.choices(patrol_type=patrolTypeChoices)
-    @app_commands.rename(patrol_type="type")
-    async def recruitmentPatrol(
+    @app_commands.command(name="recruitment-time-log", description="Submit a solo recruitment time log.")
+    @app_commands.describe(
+        duration_minutes="Patrol duration in minutes.",
+        image="Primary patrol screenshot.",
+        extra_image="Second patrol screenshot.",
+    )
+    @app_commands.rename(duration_minutes="duration-minutes")
+    @app_commands.rename(extra_image="extra-image")
+    async def recruitmentTimeLog(
         self,
         interaction: discord.Interaction,
-        patrol_type: str,
+        duration_minutes: int,
+        image: discord.Attachment,
+        extra_image: discord.Attachment,
     ) -> None:
-        if not interaction.guild or not interaction.channel:
+        if not await self._ensureRecruitmentCommandGuild(interaction):
+            return
+        if not interaction.channel or not isinstance(interaction.user, discord.Member):
             await interaction.response.send_message(
                 "This command can only be used in a server channel.",
-                ephemeral=True,
-            )
-            return
-        if not isinstance(interaction.user, discord.Member):
-            await interaction.response.send_message(
-                "This command can only be used in a server channel.",
-                ephemeral=True,
-            )
-            return
-
-        patrolType = str(patrol_type or "").strip().lower()
-        if patrolType == "group":
-            if not self._canHostGroupPatrol(interaction.user):
-                await interaction.response.send_message(
-                    "You do not have permission to host group patrol clock-ins.",
-                    ephemeral=True,
-                )
-                return
-            await interaction.response.defer(ephemeral=True, thinking=True)
-            await self._startGroupPatrolClockin(interaction)
-            return
-
-        if patrolType != "solo":
-            await interaction.response.send_message(
-                "Invalid patrol type. Please select solo or group.",
                 ephemeral=True,
             )
             return
@@ -748,12 +850,72 @@ class RecruitmentCog(commands.Cog):
             )
             return
 
-        await interactionRuntime.safeInteractionSendModal(
+        if int(duration_minutes or 0) <= 0:
+            await interaction.response.send_message(
+                "Duration must be greater than 0 minutes.",
+                ephemeral=True,
+            )
+            return
+
+        attachments = [image, extra_image]
+        imageUrls = _evidenceLinks(attachments)
+        if len(imageUrls) < 2:
+            await interaction.response.send_message(
+                "Two valid image attachments are required.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        imageFiles: list[discord.File] = []
+        for attachment in attachments:
+            if not _isImageAttachment(attachment):
+                continue
+            try:
+                imageFiles.append(await attachment.to_file())
+            except (discord.HTTPException, OSError):
+                continue
+        if len(imageFiles) < 2:
+            await interaction.followup.send(
+                "I could not copy both screenshot attachments for review. Please try again.",
+                ephemeral=True,
+            )
+            return
+
+        await self._submitSoloPatrolForReview(
             interaction,
-            SoloPatrolDetailsModal(self),
+            durationMinutes=int(duration_minutes),
+            imageUrls=imageUrls,
+            imageFiles=imageFiles,
+            reviewChannelId=int(getattr(config, "recruitmentTimeLogReviewChannelId", 0) or 0),
         )
+
+    @app_commands.command(name="recruitment-patrol", description="Create a group recruitment patrol clock-in.")
+    async def recruitmentPatrol(
+        self,
+        interaction: discord.Interaction,
+    ) -> None:
+        if not await self._ensureRecruitmentCommandGuild(interaction):
+            return
+        if not interaction.channel or not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message(
+                "This command can only be used in a server channel.",
+                ephemeral=True,
+            )
+            return
+        if not self._canHostGroupPatrol(interaction.user):
+            await interaction.response.send_message(
+                "You do not have permission to host group patrol clock-ins.",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        await self._startGroupPatrolClockin(interaction)
 
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(RecruitmentCog(bot))
+    await bot.add_cog(
+        RecruitmentCog(bot),
+        guilds=runtimeCommandScopes.getGuildAndTestGuildObjects(1475705573575098461),
+    )
 

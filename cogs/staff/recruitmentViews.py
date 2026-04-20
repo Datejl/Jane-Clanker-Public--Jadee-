@@ -12,7 +12,9 @@ from features.staff.recruitment import rendering as recruitmentRendering
 from features.staff.recruitment import service as recruitmentService
 from features.staff.recruitment import sheets as recruitmentSheets
 from runtime import interaction as interactionRuntime
+from runtime import normalization
 from runtime import orbatAudit as orbatAuditRuntime
+from runtime import permissions as runtimePermissions
 from runtime import taskBudgeter
 from features.staff.sessions import roblox
 
@@ -22,9 +24,7 @@ joinButtonEmoji = "\N{WHITE HEAVY CHECK MARK}"
 
 
 def _hasRole(member: discord.Member, roleId: Optional[int]) -> bool:
-    if not roleId:
-        return False
-    return any(role.id == int(roleId) for role in member.roles)
+    return runtimePermissions.hasAnyRole(member, [roleId])
 
 
 def _parseParticipantUserIds(raw: Optional[str]) -> list[int]:
@@ -36,15 +36,7 @@ def _parseParticipantUserIds(raw: Optional[str]) -> list[int]:
         return []
     if not isinstance(data, list):
         return []
-    out: list[int] = []
-    for value in data:
-        try:
-            userId = int(value)
-        except (TypeError, ValueError):
-            continue
-        if userId > 0:
-            out.append(userId)
-    return out
+    return normalization.normalizeIntList(data)
 
 
 def _setAllButtonsDisabled(view: discord.ui.View, disabled: bool) -> None:
@@ -194,8 +186,8 @@ class RecruitmentReviewView(discord.ui.View):
         await self._syncRecruitmentSheet(
             [submitterId],
             points,
-            patrolDelta=1,
-            hostedPatrolDelta=1,
+            patrolDelta=0,
+            hostedPatrolDelta=0,
         )
 
     async def _logRecruitmentSheetChange(

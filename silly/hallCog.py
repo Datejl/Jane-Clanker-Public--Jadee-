@@ -18,7 +18,6 @@ _starEmoji = "\N{WHITE MEDIUM STAR}"
 _fireEmoji = "\N{FIRE}"
 _skullEmoji = "\N{SKULL}"
 _cockroachEmoji = "\N{COCKROACH}"
-_sobEmoji = "\N{LOUDLY CRYING FACE}"
 _wiltedRoseEmoji = "\N{WILTED FLOWER}"
 
 _hallEmojiRoutes = {
@@ -46,12 +45,6 @@ _hallEmojiRoutes = {
         _cockroachEmoji,
         "Hall of Shame",
     ),
-    _sobEmoji: (
-        "SHAME",
-        "hallOfShameChannelId",
-        _sobEmoji,
-        "Hall of Shame",
-    ),
     _wiltedRoseEmoji: (
         "SHAME",
         "hallOfShameChannelId",
@@ -65,8 +58,6 @@ _hallEmojiNameRoutes = {
     "fire": _fireEmoji,
     "skull": _skullEmoji,
     "cockroach": _cockroachEmoji,
-    "sob": _sobEmoji,
-    "loudly_crying_face": _sobEmoji,
     "wilted_rose": _wiltedRoseEmoji,
     "wilted_flower": _wiltedRoseEmoji,
 }

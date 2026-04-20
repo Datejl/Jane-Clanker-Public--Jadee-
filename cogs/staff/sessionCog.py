@@ -1,4 +1,4 @@
-import discord
+﻿import discord
 from discord.ext import commands
 from discord import app_commands
 from features.staff.clockins import ClockinEngine, OrientationClockinAdapter

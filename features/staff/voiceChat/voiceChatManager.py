@@ -30,7 +30,7 @@ _VOICE_CHAT_NAME_PREFIXES = {
     "Shift": "Shift Comms",
     "Gamenight": "Gamenight",
     "Breakroom": "Break Room",
-    "Supervisor comms": "Supervisor comms",
+    "Supervisor comms": "Supervisor Communications",
 }
 _TEMP_VOICE_CHAT_GROUP_ORDER = (
     "Shift",
@@ -40,6 +40,7 @@ _TEMP_VOICE_CHAT_GROUP_ORDER = (
 )
 _STATIC_CHANNEL_LAYOUT = (
     "ANRO Stage",
+    "TQUAL Stage"
     "TQUAL Trainings VC",
     "TQUAL Exams VC",
     "Shift Comms",

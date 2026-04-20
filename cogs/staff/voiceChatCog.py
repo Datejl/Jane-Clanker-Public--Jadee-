@@ -3,6 +3,7 @@
 from typing import Awaitable, Callable, Optional
 
 import runtime.interaction as interactionRuntime
+from runtime import permissions as runtimePermissions
 from discord import Interaction, Member, VoiceChannel, VoiceState, app_commands
 from discord.ext import commands
 
@@ -43,13 +44,11 @@ _VOICE_CHAT_PERMISSION_CHECKS: dict[str, Callable[[Member], bool]] = {
 
 
 def _hasRole(member: Member, roleId: Optional[int]) -> bool:
-    if not roleId:
-        return False
-    return any(int(role.id) == int(roleId) for role in member.roles)
+    return runtimePermissions.hasAnyRole(member, [roleId])
 
 
 def _hasAnyRole(member: Member, roleIds: list[int]) -> bool:
-    return any(_hasRole(member, roleId) for roleId in roleIds)
+    return runtimePermissions.hasAnyRole(member, roleIds)
 
 
 class VoiceChatCog(commands.Cog):

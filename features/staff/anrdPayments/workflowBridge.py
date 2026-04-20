@@ -2,26 +2,25 @@
 
 from typing import Any, Optional
 
-from features.staff.workflows import rendering as workflowRendering
-from features.staff.workflows import service as workflowService
+from features.staff.workflows.bridge import (
+    WorkflowSubjectBridge,
+    normalizedStatus,
+    stateKeyForStatus,
+)
 
 _PAYMENT_WORKFLOW_KEY = "anrd-payments"
 _PAYMENT_SUBJECT_TYPE = "anrd_payment_request"
+_PAYMENT_STATUS_STATES = {
+    "APPROVED": "approved",
+    "DENIED": "denied",
+    "NEGOTIATING": "negotiating",
+    "NEEDS_INFO": "needs-info",
+    "PENDING": "pending-review",
+}
 
 
 def _stateForPaymentStatus(status: object) -> str:
-    normalized = str(status or "").strip().upper()
-    if normalized == "APPROVED":
-        return "approved"
-    if normalized == "DENIED":
-        return "denied"
-    if normalized == "NEGOTIATING":
-        return "negotiating"
-    if normalized == "NEEDS_INFO":
-        return "needs-info"
-    if normalized == "PENDING":
-        return "pending-review"
-    return "submitted"
+    return stateKeyForStatus(status, _PAYMENT_STATUS_STATES, default="submitted")
 
 
 def _paymentDisplayName(requestRow: dict[str, Any]) -> str:
@@ -38,13 +37,24 @@ def _paymentMetadata(requestRow: dict[str, Any]) -> dict[str, Any]:
     return {
         "requestId": int(requestRow.get("requestId") or 0),
         "submitterId": int(requestRow.get("submitterId") or 0),
-        "status": str(requestRow.get("status") or "").strip().upper(),
+        "status": normalizedStatus(requestRow.get("status")),
         "askingPrice": str(requestRow.get("askingPrice") or "").strip(),
         "negotiatedPrice": str(requestRow.get("negotiatedPrice") or "").strip(),
         "reviewMessageId": int(requestRow.get("reviewMessageId") or 0),
         "reviewChannelId": int(requestRow.get("reviewChannelId") or 0),
         "payoutSynced": int(requestRow.get("payoutSynced") or 0),
     }
+
+
+_paymentBridge = WorkflowSubjectBridge(
+    workflowKey=_PAYMENT_WORKFLOW_KEY,
+    subjectType=_PAYMENT_SUBJECT_TYPE,
+    subjectIdField="requestId",
+    displayName=_paymentDisplayName,
+    metadata=_paymentMetadata,
+    stateForStatus=_stateForPaymentStatus,
+    missingIdentifiersMessage="Payment request row is missing workflow identifiers.",
+)
 
 
 async def syncPaymentWorkflow(
@@ -56,86 +66,33 @@ async def syncPaymentWorkflow(
     eventType: str = "STATE_CHANGE",
     allowNoopEvent: bool = False,
 ) -> dict[str, Any]:
-    requestId = int(requestRow.get("requestId") or 0)
-    guildId = int(requestRow.get("guildId") or 0)
-    if requestId <= 0 or guildId <= 0:
-        raise ValueError("Payment request row is missing workflow identifiers.")
-    return await workflowService.transitionSubjectRun(
-        workflowKey=_PAYMENT_WORKFLOW_KEY,
-        subjectType=_PAYMENT_SUBJECT_TYPE,
-        subjectId=requestId,
-        guildId=guildId,
-        stateKey=stateKey or _stateForPaymentStatus(requestRow.get("status")),
+    return await _paymentBridge.sync(
+        requestRow,
+        stateKey=stateKey,
         actorId=actorId,
         note=note,
         eventType=eventType,
-        displayName=_paymentDisplayName(requestRow),
-        metadata=_paymentMetadata(requestRow),
         allowNoopEvent=allowNoopEvent,
     )
 
 
 async def ensurePaymentWorkflowCurrent(requestRow: dict[str, Any]) -> dict[str, Any]:
-    return await syncPaymentWorkflow(
+    return await _paymentBridge.ensureCurrent(
         requestRow,
-        actorId=None,
         note="Workflow synchronized from payment request status.",
-        eventType="SYNC",
-        allowNoopEvent=False,
     )
 
 
 async def getPaymentWorkflowSummary(requestRow: dict[str, Any]) -> str:
-    run = await workflowService.getRunBySubject(
-        workflowKey=_PAYMENT_WORKFLOW_KEY,
-        subjectType=_PAYMENT_SUBJECT_TYPE,
-        subjectId=int(requestRow.get("requestId") or 0),
-    )
-    if not run:
-        return ""
-    latestEvent = await workflowService.getLatestRunEvent(int(run["runId"]))
-    return workflowRendering.buildCompactSummary(run, latestEvent)
+    return await _paymentBridge.summary(requestRow)
 
 
 async def getPaymentWorkflowHistorySummary(requestRow: dict[str, Any], *, limit: int = 3) -> str:
-    run = await workflowService.getRunBySubject(
-        workflowKey=_PAYMENT_WORKFLOW_KEY,
-        subjectType=_PAYMENT_SUBJECT_TYPE,
-        subjectId=int(requestRow.get("requestId") or 0),
-    )
-    if not run:
-        return ""
-    rows = await workflowService.listRunEvents(int(run["runId"]), limit=max(1, min(int(limit or 3), 5)))
-    if not rows:
-        return ""
-    return workflowRendering.buildWorkflowEventSummary(rows)
+    return await _paymentBridge.historySummary(requestRow, limit=limit)
 
 
 async def reconcilePaymentWorkflowRows(rows: list[dict[str, Any]]) -> tuple[int, int]:
-    checked = 0
-    changed = 0
-    for row in rows:
-        requestId = int(row.get("requestId") or 0)
-        guildId = int(row.get("guildId") or 0)
-        if requestId <= 0 or guildId <= 0:
-            continue
-        checked += 1
-        existingRun = await workflowService.getRunBySubject(
-            workflowKey=_PAYMENT_WORKFLOW_KEY,
-            subjectType=_PAYMENT_SUBJECT_TYPE,
-            subjectId=requestId,
-        )
-        beforeUpdatedAt = str(existingRun.get("updatedAt") or "").strip() if existingRun else ""
-        await ensurePaymentWorkflowCurrent(row)
-        afterRun = await workflowService.getRunBySubject(
-            workflowKey=_PAYMENT_WORKFLOW_KEY,
-            subjectType=_PAYMENT_SUBJECT_TYPE,
-            subjectId=requestId,
-        )
-        afterUpdatedAt = str(afterRun.get("updatedAt") or "").strip() if afterRun else ""
-        if existingRun is None or afterUpdatedAt != beforeUpdatedAt:
-            changed += 1
-    return checked, changed
+    return await _paymentBridge.reconcileRows(rows, ensureFn=ensurePaymentWorkflowCurrent)
 
 __all__ = [
     "ensurePaymentWorkflowCurrent",

@@ -13,7 +13,9 @@ import config
 from features.staff.projects import service as projectService
 from features.staff.projects import workflowBridge as projectWorkflowBridge
 from features.staff.workflows import rendering as workflowRendering
+from runtime import commandScopes as runtimeCommandScopes
 from runtime import interaction as interactionRuntime
+from runtime import normalization
 from runtime import permissions as runtimePermissions
 from runtime import textFormatting as textFormattingRuntime
 
@@ -27,22 +29,11 @@ _THREAD_NAME_SANITIZER = re.compile(r"[^a-z0-9-]+")
 
 
 def _toPositiveInt(value: object, default: int = 0) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return int(default)
-    return parsed if parsed > 0 else int(default)
+    return normalization.toPositiveInt(value, default)
 
 
 def _toRoleIdList(values: object) -> list[int]:
-    if not isinstance(values, (list, tuple, set)):
-        return []
-    out: list[int] = []
-    for value in values:
-        parsed = _toPositiveInt(value)
-        if parsed > 0 and parsed not in out:
-            out.append(parsed)
-    return out
+    return normalization.normalizeIntList(values)
 
 
 def _statusLabel(status: object) -> str:
@@ -900,5 +891,8 @@ class ProjectCog(commands.Cog):
 
 
 async def setup(bot: commands.Bot) -> None:
-    await bot.add_cog(ProjectCog(bot))
+    await bot.add_cog(
+        ProjectCog(bot),
+        guilds=runtimeCommandScopes.getGuildAndTestGuildObjects(1436862009265229886),
+    )
 

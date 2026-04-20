@@ -80,10 +80,13 @@ class FederationCog(runtimeCogGuards.InteractionGuardMixin, commands.Cog):
         )
 
     @app_commands.command(name="federation-unlink", description="Remove a guild federation link.")
+    @app_commands.guilds(*runtimeCommandScopes.getTestGuildObjects())
     @app_commands.rename(linked_guild_id="linked-guild-id")
     async def federationUnlink(self, interaction: discord.Interaction, linked_guild_id: str) -> None:
         member = await self._requireAdminOrManageGuild(interaction)
         if member is None:
+            return
+        if not await self._requireTestGuild(interaction):
             return
         try:
             linkedGuildId = int(str(linked_guild_id or "").strip())
@@ -96,9 +99,12 @@ class FederationCog(runtimeCogGuards.InteractionGuardMixin, commands.Cog):
         await self._safeReply(interaction, f"Removed federation link to `{linkedGuildId}` if it existed.")
 
     @app_commands.command(name="federation-list", description="List linked Jane guilds for this server.")
+    @app_commands.guilds(*runtimeCommandScopes.getTestGuildObjects())
     async def federationList(self, interaction: discord.Interaction) -> None:
         member = await self._requireAdminOrManageGuild(interaction)
         if member is None:
+            return
+        if not await self._requireTestGuild(interaction):
             return
         rows = await federationService.listFederationLinks(guildId=int(member.guild.id))
         if not rows:
@@ -112,4 +118,4 @@ class FederationCog(runtimeCogGuards.InteractionGuardMixin, commands.Cog):
 
 
 async def setup(bot: commands.Bot) -> None:
-    await bot.add_cog(FederationCog())
+    await bot.add_cog(FederationCog(), guilds=runtimeCommandScopes.getTestGuildObjects())

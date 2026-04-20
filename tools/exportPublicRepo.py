@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import fnmatch
 import os
 import re
@@ -18,6 +19,7 @@ _EXCLUDED_PATH_PREFIXES = {
     ".idea",
     ".mypy_cache",
     ".pytest_cache",
+    ".python",
     ".ruff_cache",
     ".venv",
     "__pycache__",
@@ -64,7 +66,10 @@ _EXCLUDED_NAME_GLOBS = {
     "Thumbs.db",
     "coverage.xml",
     "htmlcov",
+    "client_secret_*.json",
+    "google-oauth-token*.json",
     "jane-clanker-*.json",
+    "oauth-token*.json",
     "*credentials*.json",
     "*service-account*.json",
 }
@@ -231,17 +236,51 @@ def _scanForSecrets(targetRoot: Path) -> list[str]:
     return findings
 
 
+def _stripFunctionBlock(source: str, functionName: str, *, indent: str = "") -> str:
+    escapedIndent = re.escape(indent)
+    pattern = re.compile(
+        rf"(?ms)^(?:{escapedIndent}@[^\n]+\n)*"
+        rf"{escapedIndent}(?:async\s+def|def)\s+{re.escape(functionName)}\b[^\n]*:\n"
+        rf".*?(?=^(?:{escapedIndent}@[^\n]+\n)*{escapedIndent}(?:async\s+def|def)\s+\w+\b|^class\s+\w+\b|\Z)"
+    )
+    return pattern.sub("", source)
+
+
+def _clearTopLevelIdLists(source: str) -> str:
+    tree = ast.parse(source)
+    replacements: list[tuple[int, int, str]] = []
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name):
+            continue
+        if not target.id.endswith("Ids") or not isinstance(node.value, ast.List):
+            continue
+        replacements.append((node.lineno, node.end_lineno or node.lineno, f"{target.id} = []\n"))
+
+    if not replacements:
+        return source
+
+    lines = source.splitlines(keepends=True)
+    for startLine, endLine, replacement in sorted(replacements, reverse=True):
+        lines[startLine - 1 : endLine] = [replacement]
+    return "".join(lines)
+
+
 def _sanitizeExportedConfig(targetRoot: Path) -> None:
     configPath = targetRoot / "config.py"
     if not configPath.exists():
         return
 
     source = configPath.read_text(encoding="utf-8")
-    source = re.sub(
-        r"(?ms)^([A-Za-z_][A-Za-z0-9_]*Ids)\s*=\s*\[[^\]]*?\]",
-        lambda match: f"{match.group(1)} = []",
-        source,
-    )
+    for envVar in ("BGC_SPREADSHEET_TEMPLATE_ID", "BGC_SPREADSHEET_FOLDER_ID"):
+        source = re.sub(
+            rf'("{re.escape(envVar)}",\s*\n\s*)"(?:[^"\\]|\\.)*"',
+            rf'\1""',
+            source,
+        )
+    source = _clearTopLevelIdLists(source)
     source = re.sub(
         r"(?m)^([A-Za-z_][A-Za-z0-9_]*(?:SpreadsheetId|SheetId))\s*=\s*(?:r?\"[^\"]*\"|r?'[^']*'|\d+)",
         lambda match: f'{match.group(1)} = ""',

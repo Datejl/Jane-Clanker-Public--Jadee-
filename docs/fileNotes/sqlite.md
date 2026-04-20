@@ -87,7 +87,7 @@ These back orientation sessions, certification sessions, BG queue routing, BG re
 - `recruitment_patrol_sessions`
 - `recruitment_patrol_attendees`
 
-These are the ANRORS recruitment logging tables. New review messages use `config.recruitmentChannelId`, but each stored row keeps its own `guildId`, `channelId`, and `messageId`.
+These are the ANRORS recruitment logging tables. Standard recruitment review messages use `config.recruitmentChannelId`, solo time-log review messages use `config.recruitmentTimeLogReviewChannelId`, group patrol review messages use `config.recruitmentPatrolReviewChannelId`, and group patrol screenshot collection uses `config.recruitmentPatrolEvidenceChannelId`. Each stored row keeps its own `guildId`, `channelId`, and `messageId`.
 
 That matters during a recruitment logging server/channel move: future submissions follow config, while old rows still point to their original review messages. Orientation and BG review channel config are separate unless that infrastructure is intentionally moving too.
 
@@ -197,4 +197,3 @@ There is no down-migration system. Treat schema edits as forward-only.
 - add one additive column with a clear default
 - move repeated multi-write feature logic into `runWriteTransaction(...)`
 - document a table group here after touching it
-

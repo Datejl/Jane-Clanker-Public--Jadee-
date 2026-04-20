@@ -60,8 +60,6 @@ def _formatIntervalText(totalSeconds: int) -> str:
 
 
 class ReminderCog(commands.Cog):
-    reminderGroup = app_commands.Group(name="reminder", description="Reminder and timer tools.")
-
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self._reminderTask: asyncio.Task | None = None
@@ -253,8 +251,71 @@ class ReminderCog(commands.Cog):
                 continue
             await markReminderSent(reminderId, dmDelivered=dmDelivered)
 
-    @reminderGroup.command(name="add", description="Create a reminder or timer.")
+    @app_commands.command(name="reminder", description="Create, list, or cancel reminders.")
+    @app_commands.describe(
+        action="What reminder action to run.",
+        when="When to remind you. Required for add/team.",
+        reminder_text="Reminder text. Required for add/team.",
+        repeat="Optional repeat interval, such as 1d or 2w.",
+        role_ids="Role IDs to ping. Required for team reminders.",
+        reminder_id="Reminder ID to cancel. Required for cancel.",
+    )
     @app_commands.rename(reminder_text="reminder-text")
+    @app_commands.rename(role_ids="role-ids")
+    @app_commands.rename(reminder_id="reminder-id")
+    @app_commands.choices(
+        action=[
+            app_commands.Choice(name="Add personal reminder", value="add"),
+            app_commands.Choice(name="Add team reminder", value="team"),
+            app_commands.Choice(name="List my reminders", value="list"),
+            app_commands.Choice(name="Cancel reminder", value="cancel"),
+        ]
+    )
+    async def reminderCommand(
+        self,
+        interaction: discord.Interaction,
+        action: app_commands.Choice[str],
+        when: str | None = None,
+        reminder_text: str | None = None,
+        repeat: str | None = None,
+        role_ids: str | None = None,
+        reminder_id: int | None = None,
+    ) -> None:
+        selectedAction = str(getattr(action, "value", action) or "").strip().lower()
+        if selectedAction == "add":
+            if not when or not reminder_text:
+                await self._safeEphemeral(interaction, "`when` and `reminder-text` are required for add.")
+                return
+            await self.addReminder(
+                interaction,
+                when=when,
+                reminder_text=reminder_text,
+                repeat=repeat,
+            )
+            return
+        if selectedAction == "team":
+            if not when or not reminder_text or not role_ids:
+                await self._safeEphemeral(interaction, "`when`, `reminder-text`, and `role-ids` are required for team.")
+                return
+            await self.addTeamReminder(
+                interaction,
+                when=when,
+                role_ids=role_ids,
+                reminder_text=reminder_text,
+                repeat=repeat,
+            )
+            return
+        if selectedAction == "list":
+            await self.listReminders(interaction)
+            return
+        if selectedAction == "cancel":
+            if reminder_id is None:
+                await self._safeEphemeral(interaction, "`reminder-id` is required for cancel.")
+                return
+            await self.cancelReminderCommand(interaction, reminder_id=reminder_id)
+            return
+        await self._safeEphemeral(interaction, "Unknown reminder action.")
+
     async def addReminder(
         self,
         interaction: discord.Interaction,
@@ -289,9 +350,6 @@ class ReminderCog(commands.Cog):
             f"Reminder #{reminderId} set for {discord.utils.format_dt(remindAtUtc, 'F')} ({label}).{repeatText}",
         )
 
-    @reminderGroup.command(name="team", description="Create a channel-wide reminder for one or more staff roles.")
-    @app_commands.rename(role_ids="role-ids")
-    @app_commands.rename(reminder_text="reminder-text")
     async def addTeamReminder(
         self,
         interaction: discord.Interaction,
@@ -335,7 +393,6 @@ class ReminderCog(commands.Cog):
             f"Team reminder #{reminderId} set for {discord.utils.format_dt(remindAtUtc, 'F')} ({label}) for {roleMentions}.{repeatText}",
         )
 
-    @reminderGroup.command(name="list", description="List your active reminders.")
     async def listReminders(self, interaction: discord.Interaction) -> None:
         if not interaction.guild:
             await self._safeEphemeral(interaction, "This command can only be used in a server.")
@@ -369,8 +426,6 @@ class ReminderCog(commands.Cog):
             allowedMentions=discord.AllowedMentions(users=False, roles=False, everyone=False),
         )
 
-    @reminderGroup.command(name="cancel", description="Cancel one of your reminders.")
-    @app_commands.rename(reminder_id="reminder-id")
     async def cancelReminderCommand(self, interaction: discord.Interaction, reminder_id: int) -> None:
         reminder = await getReminder(int(reminder_id))
         if reminder is None:

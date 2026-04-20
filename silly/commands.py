@@ -11,6 +11,8 @@ from typing import Callable
 import discord
 
 import config
+from runtime import interaction as interactionRuntime
+from runtime import normalization
 from runtime import permissions as runtimePermissions
 from runtime import webhooks as runtimeWebhooks
 
@@ -21,6 +23,7 @@ _americaYaRegex = re.compile(r"\bamerica\W*ya\b", re.IGNORECASE)
 _halloEverynyanRegex = re.compile(r"\bhallo\W*everynyan\b", re.IGNORECASE)
 _hampterRegex = re.compile(r"\bhampter\b", re.IGNORECASE)
 _eyesRegex = re.compile(r"^\s*(?::eyes:|👀)\s*$", re.IGNORECASE)
+_tanabataTreeRegex = re.compile("^\\s*(?::tanabata_tree:|\U0001F38B)\\s*$", re.IGNORECASE)
 _recipePromptRegex = re.compile(r"how\s+do\s+i\s+make\s+(?P<item>[^?\n\r]+)", re.IGNORECASE)
 _auraRegex = re.compile(r"\b(how much aura do you have|do you have aura|what amount of aura do you have)\b", re.IGNORECASE)
 
@@ -48,32 +51,24 @@ _eyesUserIds = {
     735528587737694248,
 }
 _eyesGifUrl = "https://media.discordapp.net/attachments/1430279695303184415/1455423665238839420/eye-side-eye-emoji.gif?ex=69b835aa&is=69b6e42a&hm=cfa65c1d8c1102945bc69894da0233ccadf5d0edf45db05664486ff545a55bbc&="
+_tanabataTreeUserIds = {
+    1468150318675136634,
+}
+_tanabataTreeGifUrl = "https://media.discordapp.net/attachments/1374350515617665088/1462696462482935808/image.gif?ex=69e12b7c&is=69dfd9fc&hm=bc65c13dc60b72fbaf8fc8aed05b5b1b27113bd0aec2004e3f8c55de813cad57&="
 _stimmerUserId = 641429806382317583
 _momUserId = 331660652672319488
 _janeGreetingBlacklistedUserIds = {
     1220034130805260288,
 }
 _janeUserId = 1463176057422217348
-_skinCooldownBypassRoleIds = {
-    int(roleId)
-    for roleId in getattr(config, "skinCooldownBypassRoleIds", [])
-    if int(roleId) > 0
-}
-_skinAllowedUserIds = {
-    int(userId)
-    for userId in getattr(config, "skinAllowedUserIds", [])
-    if int(userId) > 0
-}
-_skinOneMinuteCooldownRoleIds = {
-    int(roleId)
-    for roleId in getattr(config, "skinOneMinuteCooldownRoleIds", [1451056189625602341])
-    if int(roleId) > 0
-}
-_skinDoubleCooldownRoleIds = {
-    int(roleId)
-    for roleId in getattr(config, "skinDoubleCooldownRoleIds", [1432967050082385982])
-    if int(roleId) > 0
-}
+_skinCooldownBypassRoleIds = normalization.normalizeIntSet(getattr(config, "skinCooldownBypassRoleIds", []))
+_skinAllowedUserIds = normalization.normalizeIntSet(getattr(config, "skinAllowedUserIds", []))
+_skinOneMinuteCooldownRoleIds = normalization.normalizeIntSet(
+    getattr(config, "skinOneMinuteCooldownRoleIds", [1451056189625602341])
+)
+_skinDoubleCooldownRoleIds = normalization.normalizeIntSet(
+    getattr(config, "skinDoubleCooldownRoleIds", [1432967050082385982])
+)
 
 _skinCommandNextAllowedAtByUser: dict[int, datetime] = {}
 _janeGreetingNextAllowedAtByUser: dict[int, datetime] = {}
@@ -97,6 +92,10 @@ def _normalizeText(value: str) -> str:
 
 def _isSixtySevenTrigger(content: str) -> bool:
     return str(content or "").strip() == "67"
+
+
+async def _tryChannelSend(channel: discord.abc.Messageable, content: str) -> bool:
+    return await interactionRuntime.safeChannelSend(channel, content=content) is not None
 
 
 async def _getMemberById(guild: discord.Guild, userId: int) -> discord.Member | None:
@@ -230,6 +229,28 @@ def _isHorseTrigger(content: str) -> bool:
 
 def _isEyesTrigger(content: str) -> bool:
     return bool(_eyesRegex.match(str(content or "")))
+
+
+def _isTanabataTreeTrigger(content: str) -> bool:
+    return bool(_tanabataTreeRegex.match(str(content or "")))
+
+
+_DirectSillyResponse = tuple[set[int], Callable[[str], bool], str]
+_directSillyResponses: tuple[_DirectSillyResponse, ...] = (
+    (_americaYaUserIds, _isAmericaYaTrigger, "Hallo!"),
+    (_halloEverynyanUserIds, _isHalloEverynyanTrigger, _halloEverynyanGifUrl),
+    (_horseUserIds, _isHorseTrigger, _horseGifUrl),
+    (_eyesUserIds, _isEyesTrigger, _eyesGifUrl),
+    (_tanabataTreeUserIds, _isTanabataTreeTrigger, _tanabataTreeGifUrl),
+)
+
+
+async def _maybeSendDirectSillyResponse(message: discord.Message, content: str) -> bool:
+    authorId = int(getattr(message.author, "id", 0) or 0)
+    for userIds, predicate, response in _directSillyResponses:
+        if authorId in userIds and predicate(content):
+            return await _tryChannelSend(message.channel, response)
+    return False
 
 
 async def _resolveMemberFromQuery(guild: discord.Guild, query: str) -> discord.Member | None:
@@ -573,10 +594,7 @@ async def maybeHandleSixtySevenSpam(message: discord.Message) -> bool:
         return False
 
     _sixtySevenStreakByChannelUser.pop(streakKey, None)
-    try:
-        await message.channel.send("cease")
-    except Exception:
-        pass
+    await _tryChannelSend(message.channel, "cease")
 
     try:
         await message.author.timeout(
@@ -596,29 +614,7 @@ async def maybeHandleSillyMentions(message: discord.Message, botClient: discord.
         return
 
     content = str(message.content or "")
-    if int(message.author.id) in _americaYaUserIds and _isAmericaYaTrigger(content):
-        try:
-            await message.channel.send("Hallo!")
-        except Exception:
-            return
-        return
-    if int(message.author.id) in _halloEverynyanUserIds and _isHalloEverynyanTrigger(content):
-        try:
-            await message.channel.send(_halloEverynyanGifUrl)
-        except Exception:
-            return
-        return
-    if int(message.author.id) in _horseUserIds and _isHorseTrigger(content):
-        try:
-            await message.channel.send(_horseGifUrl)
-        except Exception:
-            return
-        return
-    if int(message.author.id) in _eyesUserIds and _isEyesTrigger(content):
-        try:
-            await message.channel.send(_eyesGifUrl)
-        except Exception:
-            return
+    if await _maybeSendDirectSillyResponse(message, content):
         return
 
     isMentioningJane = any(int(user.id) == int(botUser.id) for user in message.mentions)
@@ -627,18 +623,12 @@ async def maybeHandleSillyMentions(message: discord.Message, botClient: discord.
 
     #hampter
     if int(message.author.id) in _hampterUserIds and _isHampterTrigger(content) and isMentioningJane:
-        try:
-            await message.channel.send(_hampterGifUrl)
-            await message.delete()
-        except Exception:
-            return
+        if await _tryChannelSend(message.channel, _hampterGifUrl):
+            await interactionRuntime.safeMessageDelete(message)
         return
 
     if isMentioningJane and _isAuraTrigger(content):
-        try:
-            await message.channel.send(_auraText)
-        except Exception:
-            return
+        await _tryChannelSend(message.channel, _auraText)
         return
 
     recipeMatch = _recipePromptRegex.search(content)
@@ -646,20 +636,13 @@ async def maybeHandleSillyMentions(message: discord.Message, botClient: discord.
         requestedItem = str(recipeMatch.group("item") or "").strip()
         resolved = _resolveRecipe(requestedItem)
         if resolved is None:
-            try:
-                await message.channel.send(
-                    "I don't have that recipe yet. Try one from my recipe list."
-                )
-            except Exception:
-                return
+            await _tryChannelSend(
+                message.channel,
+                "I don't have that recipe yet. Try one from my recipe list.",
+            )
             return
         recipeName, recipeText = resolved
-        try:
-            await message.channel.send(
-                f"**{recipeName.title()} Recipe**\n{recipeText}"
-            )
-        except Exception:
-            return
+        await _tryChannelSend(message.channel, f"**{recipeName.title()} Recipe**\n{recipeText}")
         return
 
     if not _janeGreetingRegex.search(content):
@@ -683,7 +666,4 @@ async def maybeHandleSillyMentions(message: discord.Message, botClient: discord.
         responseText = "Hey cash! Good to see you :D"
     else:
         responseText = f"Hi {message.author.mention}!"
-    try:
-        await message.channel.send(responseText)
-    except Exception:
-        return
+    await _tryChannelSend(message.channel, responseText)
