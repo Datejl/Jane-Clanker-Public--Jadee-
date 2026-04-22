@@ -247,6 +247,8 @@ johnClankerBotId = 0
 welcomeChannelId = 0
 welcomeMessageTemplate = "Welcome to **{guild}**, {mention}."
 publicRoleMenus = {}
+reactionRoleCommandRoleIds = []
+reactionRolePolicyRoleIds = []
 
 suggestionChannelId = 0
 suggestionForumChannelId = 0

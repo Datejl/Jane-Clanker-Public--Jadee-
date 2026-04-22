@@ -217,39 +217,54 @@ class ReminderCog(commands.Cog):
         except (discord.Forbidden, discord.HTTPException):
             pass
 
+    async def _processReminder(self, row: dict, *, now: datetime) -> None:
+        reminderId = int(row.get("reminderId") or 0)
+        embed = self._buildReminderEmbed(row)
+        guildId = int(row.get("guildId") or 0)
+        if guildId > 0:
+            guild = self.bot.get_guild(guildId)
+            if guild is not None:
+                embed.add_field(name="Server", value=guild.name, inline=False)
+
+        dmDelivered = False
+        targetType = str(row.get("targetType") or "USER").strip().upper()
+        if targetType == "ROLE":
+            await self._deliverRoleReminder(row, embed)
+        else:
+            dmDelivered = await self._deliverUserReminder(row, embed)
+
+        nextTime = self._nextRecurringTime(row, now=now)
+        if nextTime is not None:
+            await rescheduleReminder(reminderId, remindAtUtcIso=nextTime.isoformat())
+            return
+        await markReminderSent(reminderId, dmDelivered=dmDelivered)
+
     async def _runReminderLoop(self) -> None:
-        while True:
+        await self.bot.wait_until_ready()
+        while not self.bot.is_closed():
             try:
                 await self._runReminderTick()
             except asyncio.CancelledError:
                 raise
             except Exception:
                 log.exception("Reminder loop failed.")
-            await asyncio.sleep(30)
+            await asyncio.sleep(2)
 
     async def _runReminderTick(self) -> None:
         now = datetime.now(timezone.utc)
-        for row in await listDueReminders(now.isoformat(), limit=25):
-            reminderId = int(row.get("reminderId") or 0)
-            embed = self._buildReminderEmbed(row)
-            guildId = int(row.get("guildId") or 0)
-            if guildId > 0:
-                guild = self.bot.get_guild(guildId)
-                if guild is not None:
-                    embed.add_field(name="Server", value=guild.name, inline=False)
-
-            targetType = str(row.get("targetType") or "USER").strip().upper()
-            dmDelivered = False
-            if targetType == "ROLE":
-                await self._deliverRoleReminder(row, embed)
-            else:
-                dmDelivered = await self._deliverUserReminder(row, embed)
-
-            nextTime = self._nextRecurringTime(row, now=now)
-            if nextTime is not None:
-                await rescheduleReminder(reminderId, remindAtUtcIso=nextTime.isoformat())
-                continue
-            await markReminderSent(reminderId, dmDelivered=dmDelivered)
+        dueRows = await listDueReminders(now.isoformat(), limit=50)
+        if not dueRows:
+            return
+        results = await asyncio.gather(
+            *(self._processReminder(row, now=now) for row in dueRows),
+            return_exceptions=True,
+        )
+        for result in results:
+            if isinstance(result, Exception):
+                log.exception(
+                    "Reminder processing failed.",
+                    exc_info=(type(result), result, result.__traceback__),
+                )
 
     @app_commands.command(name="reminder", description="Create, list, or cancel reminders.")
     @app_commands.describe(
@@ -259,6 +274,7 @@ class ReminderCog(commands.Cog):
         repeat="Optional repeat interval, such as 1d or 2w.",
         role_ids="Role IDs to ping. Required for team reminders.",
         reminder_id="Reminder ID to cancel. Required for cancel.",
+        attachment="Optional attachment to include with the reminder.",
     )
     @app_commands.rename(reminder_text="reminder-text")
     @app_commands.rename(role_ids="role-ids")
@@ -280,6 +296,7 @@ class ReminderCog(commands.Cog):
         repeat: str | None = None,
         role_ids: str | None = None,
         reminder_id: int | None = None,
+        attachment: discord.Attachment | None = None,
     ) -> None:
         selectedAction = str(getattr(action, "value", action) or "").strip().lower()
         if selectedAction == "add":
@@ -291,6 +308,7 @@ class ReminderCog(commands.Cog):
                 when=when,
                 reminder_text=reminder_text,
                 repeat=repeat,
+                attachment=attachment,
             )
             return
         if selectedAction == "team":
@@ -303,6 +321,7 @@ class ReminderCog(commands.Cog):
                 role_ids=role_ids,
                 reminder_text=reminder_text,
                 repeat=repeat,
+                attachment=attachment,
             )
             return
         if selectedAction == "list":
@@ -322,10 +341,13 @@ class ReminderCog(commands.Cog):
         when: str,
         reminder_text: str,
         repeat: str | None = None,
+        attachment: discord.Attachment | None = None,
     ) -> None:
         if not interaction.guild or not interaction.channel:
             await self._safeEphemeral(interaction, "This command can only be used in a server.")
             return
+        if attachment is not None:
+            reminder_text = f"{reminder_text}\n{attachment.url}"
         try:
             remindAtUtc, label = parseReminderWhen(when)
             repeatSeconds = parseRecurringInterval(str(repeat or ""))
@@ -357,6 +379,7 @@ class ReminderCog(commands.Cog):
         role_ids: str,
         reminder_text: str,
         repeat: str | None = None,
+        attachment: discord.Attachment | None = None,
     ) -> None:
         if not interaction.guild or not interaction.channel or not isinstance(interaction.user, discord.Member):
             await self._safeEphemeral(interaction, "This command can only be used in a server.")
@@ -369,6 +392,8 @@ class ReminderCog(commands.Cog):
         if not roleIds:
             await self._safeEphemeral(interaction, "Please provide at least one valid role ID.")
             return
+        if attachment is not None:
+            reminder_text = f"{reminder_text}\n{attachment.url}"
         try:
             remindAtUtc, label = parseReminderWhen(when)
             repeatSeconds = parseRecurringInterval(str(repeat or ""))
