@@ -81,7 +81,7 @@ class ClockinEngine:
             restored += 1
         return restored
 
-    async def createSession(self, guildId: int, channelId: int, hostId: int, maxAttendeeLimit: int, **kwargs) -> int:
+    async def createSession(self, guildId: int, channelId: int, hostId: int, maxAttendeeLimit: int = 30, **kwargs) -> int:
         return await self.adapter.createSession(guildId, channelId, hostId, maxAttendeeLimit, **kwargs)
 
     async def setSessionMessageId(self, sessionId: int, messageId: int) -> None:

@@ -2,7 +2,7 @@
 from typing import Optional, Dict, Any
 
 import config
-from features.staff.orbat.a1 import cellRange, columnIndex
+from features.staff.orbat.a1 import cellRange, columnIndex, indexToColumn
 from features.staff.orbat.engineFacade import createEngineServiceFacade
 from features.staff.orbat.multiEngine import getMultiOrbatEngine
 
@@ -58,7 +58,66 @@ def _getColumns() -> Dict[str, str]:
         "ageGroup": getattr(config, "orbatColumnAgeGroup", "T"),
         "shifts": getattr(config, "orbatColumnShifts", "M"),
         "otherEvents": getattr(config, "orbatColumnOtherEvents", "N"),
+        "total": getattr(config, "orbatColumnTotal", "O"),
+        "allTime": getattr(config, "orbatColumnAllTime", "P"),
     }
+
+
+_ORBAT_VISIBLE_COLUMN_KEYS = (
+    "robloxUser",
+    "rank",
+    "clearance",
+    "status",
+    "loaInfo",
+    "department",
+    "notes",
+    "shifts",
+    "otherEvents",
+    "total",
+    "allTime",
+    "mic",
+    "timezone",
+    "ageGroup",
+)
+
+
+def _configuredColumnLetters(columns: Dict[str, str]) -> list[str]:
+    return [
+        str(col or "").strip().upper()
+        for col in list(columns.values())
+        if str(col or "").strip()
+    ]
+
+
+def _configuredReadRange(columns: Dict[str, str]) -> str:
+    endColumn = indexToColumn(_maxColumnIndex(_configuredColumnLetters(columns)))
+    return f"{_sheetName()}!A:{endColumn}"
+
+
+def _columnValues(rows: list[list[str]], columnLetter: str) -> list[str]:
+    index = _columnToIndex(columnLetter) - 1
+    if index < 0:
+        return []
+    return [row[index] if index < len(row) else "" for row in rows]
+
+
+def _rowColumnValue(row: list[str], columnLetter: str) -> str:
+    index = _columnToIndex(columnLetter) - 1
+    if index < 0 or index >= len(row):
+        return ""
+    return row[index]
+
+
+def _dataStyleColumnBounds(columns: Dict[str, str]) -> tuple[int, int]:
+    indices = [
+        _columnToIndex(columns.get(key, ""))
+        for key in _ORBAT_VISIBLE_COLUMN_KEYS
+        if columns.get(key, "")
+    ]
+    indices = [index for index in indices if index > 0]
+    if not indices:
+        return 0, 0
+    return min(indices) - 1, max(indices)
 
 
 def _lookupCacheTtlSec() -> float:
@@ -356,6 +415,10 @@ def _applySectionBanding(service, headers: Dict[str, int], totalRows: int) -> No
 
     primaryColor, secondaryColor = _resolveBandingColors(meta, sheetName)
     bounds = _sectionBounds(headers, totalRows)
+    columns = _getColumns()
+    startColumnIndex, endColumnIndex = _dataStyleColumnBounds(columns)
+    if endColumnIndex <= startColumnIndex:
+        return
 
     requests = []
     for entry in bandedRanges:
@@ -388,8 +451,8 @@ def _applySectionBanding(service, headers: Dict[str, int], totalRows: int) -> No
                             "sheetId": sheetId,
                             "startRowIndex": rowIdx - 1,
                             "endRowIndex": rowIdx,
-                            "startColumnIndex": 1,
-                            "endColumnIndex": 20,
+                            "startColumnIndex": startColumnIndex,
+                            "endColumnIndex": endColumnIndex,
                         },
                         "cell": {"userEnteredFormat": {"backgroundColor": color}},
                         "fields": "userEnteredFormat.backgroundColor",
@@ -416,9 +479,9 @@ def _applyRowTextStyle(
     sheetGid = _getSheetId(service)
     fontSize = int(getattr(config, "orbatRowFontSize", 13) or 13)
     bold = bool(getattr(config, "orbatRowBold", True))
-    # Keep styling scoped to visible ORBAT data columns.
-    startColumnIndex = 1  # B
-    endColumnIndex = 20   # T (exclusive)
+    startColumnIndex, endColumnIndex = _dataStyleColumnBounds(_getColumns())
+    if endColumnIndex <= startColumnIndex:
+        return
     request = {
         "repeatCell": {
             "range": {
@@ -669,13 +732,12 @@ def upsertOrbatRow(
     sheetId = _spreadsheetId()
     section = _sectionForRank(rank)
 
-    # Load columns B:J to find section headers and existing rows.
-    values = _loadRangeValues(service, f"{_sheetName()}!B:J")
-    colB = [row[0] if len(row) > 0 else "" for row in values]
-    colD = [row[2] if len(row) > 2 else "" for row in values]
-    colJ = [row[8] if len(row) > 8 else "" for row in values]
+    values = _loadRangeValues(service, _configuredReadRange(columns))
+    nameValues = _columnValues(values, columns["robloxUser"])
+    rankValues = _columnValues(values, columns["rank"])
+    departmentValues = _columnValues(values, columns["department"])
 
-    headers = _findSectionHeaders(colB)
+    headers = _findSectionHeaders(nameValues)
     if not section or section not in headers:
         return _upsertOrbatRowSimple(
             discordId,
@@ -691,7 +753,7 @@ def upsertOrbatRow(
             loaInfo,
         )
 
-    bounds = _sectionBounds(headers, max(len(colB), 1))
+    bounds = _sectionBounds(headers, max(len(nameValues), 1))
     startRow, endRow = bounds[section]
     if endRow < startRow:
         endRow = startRow
@@ -699,7 +761,7 @@ def upsertOrbatRow(
     # Find existing row by Roblox username (case-insensitive).
     targetLower = robloxUser.strip().lower()
     existingRow = None
-    for idx, value in enumerate(colB, start=1):
+    for idx, value in enumerate(nameValues, start=1):
         if str(value or "").strip().lower() == targetLower:
             existingRow = idx
             break
@@ -780,27 +842,27 @@ def upsertOrbatRow(
         needsBanding = True
 
         # Reload data after deletion.
-        values = _loadRangeValues(service, f"{_sheetName()}!B:J")
-        colB = [row[0] if len(row) > 0 else "" for row in values]
-        colD = [row[2] if len(row) > 2 else "" for row in values]
-        colJ = [row[8] if len(row) > 8 else "" for row in values]
-        headers = _findSectionHeaders(colB)
-        bounds = _sectionBounds(headers, max(len(colB), 1))
+        values = _loadRangeValues(service, _configuredReadRange(columns))
+        nameValues = _columnValues(values, columns["robloxUser"])
+        rankValues = _columnValues(values, columns["rank"])
+        departmentValues = _columnValues(values, columns["department"])
+        headers = _findSectionHeaders(nameValues)
+        bounds = _sectionBounds(headers, max(len(nameValues), 1))
         startRow, endRow = bounds.get(section, (startRow, endRow))
 
     # Build ordered entries in target section.
     entries: list[dict] = []
     vacantRowsToDelete: list[int] = []
     for rowIdx in range(startRow, endRow + 1):
-        name = colB[rowIdx - 1] if rowIdx - 1 < len(colB) else ""
+        name = nameValues[rowIdx - 1] if rowIdx - 1 < len(nameValues) else ""
         if not name:
             continue
         if _isVacant(name):
             if section in {"MIDDLE", "JUNIOR"}:
                 vacantRowsToDelete.append(rowIdx)
                 continue
-        rankCell = colD[rowIdx - 1] if rowIdx - 1 < len(colD) else ""
-        deptCell = colJ[rowIdx - 1] if rowIdx - 1 < len(colJ) else ""
+        rankCell = rankValues[rowIdx - 1] if rowIdx - 1 < len(rankValues) else ""
+        deptCell = departmentValues[rowIdx - 1] if rowIdx - 1 < len(departmentValues) else ""
         entries.append(
             {
                 "row": rowIdx,
@@ -833,22 +895,22 @@ def upsertOrbatRow(
         ).execute()
         needsBanding = True
 
-        values = _loadRangeValues(service, f"{_sheetName()}!B:J")
-        colB = [row[0] if len(row) > 0 else "" for row in values]
-        colD = [row[2] if len(row) > 2 else "" for row in values]
-        colJ = [row[8] if len(row) > 8 else "" for row in values]
-        headers = _findSectionHeaders(colB)
-        bounds = _sectionBounds(headers, max(len(colB), 1))
+        values = _loadRangeValues(service, _configuredReadRange(columns))
+        nameValues = _columnValues(values, columns["robloxUser"])
+        rankValues = _columnValues(values, columns["rank"])
+        departmentValues = _columnValues(values, columns["department"])
+        headers = _findSectionHeaders(nameValues)
+        bounds = _sectionBounds(headers, max(len(nameValues), 1))
         startRow, endRow = bounds.get(section, (startRow, endRow))
         entries = []
         for rowIdx in range(startRow, endRow + 1):
-            name = colB[rowIdx - 1] if rowIdx - 1 < len(colB) else ""
+            name = nameValues[rowIdx - 1] if rowIdx - 1 < len(nameValues) else ""
             if not name:
                 continue
             if _isVacant(name) and section in {"MIDDLE", "JUNIOR"}:
                 continue
-            rankCell = colD[rowIdx - 1] if rowIdx - 1 < len(colD) else ""
-            deptCell = colJ[rowIdx - 1] if rowIdx - 1 < len(colJ) else ""
+            rankCell = rankValues[rowIdx - 1] if rowIdx - 1 < len(rankValues) else ""
+            deptCell = departmentValues[rowIdx - 1] if rowIdx - 1 < len(departmentValues) else ""
             entries.append(
                 {
                     "row": rowIdx,
@@ -887,8 +949,8 @@ def upsertOrbatRow(
 
     # If we can reuse a vacant row at the insertion point, do it.
     canReuseVacant = False
-    if insertRow <= endRow and insertRow - 1 < len(colB):
-        if str(colB[insertRow - 1]).strip().lower() == "--vacant--":
+    if insertRow <= endRow and insertRow - 1 < len(nameValues):
+        if str(nameValues[insertRow - 1]).strip().lower() == "--vacant--":
             canReuseVacant = True
 
     if not canReuseVacant:
@@ -931,10 +993,10 @@ def upsertOrbatRow(
     _writeRow(service, sheetId, columns, valuesByColumn, insertRow)
     _applyTotalsFormulasWithHistory(service, insertRow, historyValue)
     if needsBanding:
-        values = _loadRangeValues(service, f"{_sheetName()}!B:D")
-        colB = [row[0] if len(row) > 0 else "" for row in values]
-        headers = _findSectionHeaders(colB)
-        _applySectionBanding(service, headers, max(len(colB), 1))
+        values = _loadRangeValues(service, _configuredReadRange(columns))
+        nameValues = _columnValues(values, columns["robloxUser"])
+        headers = _findSectionHeaders(nameValues)
+        _applySectionBanding(service, headers, max(len(nameValues), 1))
     return insertRow
 
 
@@ -943,18 +1005,18 @@ def organizeOrbatRows() -> dict:
     sheetId = _spreadsheetId()
     columns = _getColumns()
 
-    values = _loadRangeValuesWithOptions(service, f"{_sheetName()}!A:T")
+    values = _loadRangeValuesWithOptions(service, _configuredReadRange(columns))
     if not values:
         return {"sections": 0, "updated": 0}
 
-    colB = [row[1] if len(row) > 1 else "" for row in values]
-    colD = [row[3] if len(row) > 3 else "" for row in values]
-    colJ = [row[9] if len(row) > 9 else "" for row in values]
-    headers = _findSectionHeaders(colB)
+    nameValues = _columnValues(values, columns["robloxUser"])
+    rankValues = _columnValues(values, columns["rank"])
+    departmentValues = _columnValues(values, columns["department"])
+    headers = _findSectionHeaders(nameValues)
     if not headers:
         return {"sections": 0, "updated": 0}
 
-    bounds = _sectionBounds(headers, max(len(colB), 1))
+    bounds = _sectionBounds(headers, max(len(nameValues), 1))
     sheetName = _sheetName()
 
     columnLetters = [
@@ -990,9 +1052,9 @@ def organizeOrbatRows() -> dict:
         emptyRows = []
         vacantRows = []
         for rowIdx in range(startRow, endRow + 1):
-            if rowIdx - 1 >= len(colB):
+            if rowIdx - 1 >= len(nameValues):
                 break
-            nameCell = colB[rowIdx - 1]
+            nameCell = nameValues[rowIdx - 1]
             if not str(nameCell or "").strip():
                 emptyRows.append(rowIdx)
                 continue
@@ -1020,12 +1082,12 @@ def organizeOrbatRows() -> dict:
                 body={"requests": deleteRequests},
             ).execute()
 
-            values = _loadRangeValuesWithOptions(service, f"{sheetName}!A:T")
-            colB = [row[1] if len(row) > 1 else "" for row in values]
-            colD = [row[3] if len(row) > 3 else "" for row in values]
-            colJ = [row[9] if len(row) > 9 else "" for row in values]
-            headers = _findSectionHeaders(colB)
-            bounds = _sectionBounds(headers, max(len(colB), 1))
+            values = _loadRangeValuesWithOptions(service, _configuredReadRange(columns))
+            nameValues = _columnValues(values, columns["robloxUser"])
+            rankValues = _columnValues(values, columns["rank"])
+            departmentValues = _columnValues(values, columns["department"])
+            headers = _findSectionHeaders(nameValues)
+            bounds = _sectionBounds(headers, max(len(nameValues), 1))
             startRow, endRow = bounds.get(section, (startRow, endRow))
 
         entries: list[dict] = []
@@ -1033,13 +1095,13 @@ def organizeOrbatRows() -> dict:
             if rowIdx - 1 >= len(values):
                 break
             rowValues = values[rowIdx - 1]
-            name = rowValues[1] if len(rowValues) > 1 else ""
+            name = _rowColumnValue(rowValues, columns["robloxUser"])
             if not name:
                 continue
             if _isVacant(name) and section in {"MIDDLE", "JUNIOR"}:
                 continue
-            rankCell = colD[rowIdx - 1] if rowIdx - 1 < len(colD) else ""
-            deptCell = colJ[rowIdx - 1] if rowIdx - 1 < len(colJ) else ""
+            rankCell = rankValues[rowIdx - 1] if rowIdx - 1 < len(rankValues) else ""
+            deptCell = departmentValues[rowIdx - 1] if rowIdx - 1 < len(departmentValues) else ""
             valuesByCol = {}
             for col, idx in columnIndices.items():
                 if idx < len(rowValues):
@@ -1119,11 +1181,11 @@ def organizeOrbatRows() -> dict:
 
         updatedSections += 1
 
-    values = _loadRangeValues(service, f"{sheetName}!B:D")
-    colB = [row[0] if len(row) > 0 else "" for row in values]
-    headers = _findSectionHeaders(colB)
-    bounds = _sectionBounds(headers, max(len(colB), 1))
-    _applySectionBanding(service, headers, max(len(colB), 1))
+    values = _loadRangeValues(service, _configuredReadRange(columns))
+    nameValues = _columnValues(values, columns["robloxUser"])
+    headers = _findSectionHeaders(nameValues)
+    bounds = _sectionBounds(headers, max(len(nameValues), 1))
+    _applySectionBanding(service, headers, max(len(nameValues), 1))
 
     _invalidateLookupCaches()
     return {"sections": len(bounds), "updated": updatedSections}

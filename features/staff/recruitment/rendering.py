@@ -17,8 +17,13 @@ def buildRecruitmentEmbed(submission: Dict) -> discord.Embed:
     embed = discord.Embed(
         title="Recruitment Log",
     )
+    recruitUserId = int(submission["recruitUserId"])
+    recruitDisplayName = str(submission.get("recruitDisplayName") or "").strip()
+    recruitText = f"<@{recruitUserId}>"
+    if recruitDisplayName:
+        recruitText = f"{recruitText} ({recruitDisplayName})"
     embed.add_field(name="Recruiter", value=f"<@{submission['submitterId']}>", inline=False)
-    embed.add_field(name="Recruited User", value=f"<@{submission['recruitUserId']}>", inline=False)
+    embed.add_field(name="Recruited User", value=recruitText, inline=False)
     passed = "Yes" if submission["passedOrientation"] else "Pending"
     embed.add_field(name="Passed Orientation", value=passed, inline=True)
     embed.add_field(name="Potential Points", value=str(submission["points"]), inline=True)

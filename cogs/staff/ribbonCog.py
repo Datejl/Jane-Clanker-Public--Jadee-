@@ -43,11 +43,7 @@ from features.staff.ribbons.cogMixin import RibbonCogMixin
 class RibbonCog(RibbonCogMixin, commands.Cog):
     ribbonGroup = app_commands.Group(
         name="ribbon",
-        description="Ribbon manager tools.",
-    )
-    ribbonsGroup = app_commands.Group(
-        name="ribbons",
-        description="Ribbon loadout requests and profiles.",
+        description="Ribbon request tools.",
     )
 
     def __init__(self, bot: commands.Bot):
@@ -59,8 +55,6 @@ class RibbonCog(RibbonCogMixin, commands.Cog):
         self.requestLocks: dict[int, asyncio.Lock] = {}
         self._reloadRulesConfig()
 
-
-    @ribbonGroup.command(name="status", description="Show ribbon engine and catalog status.")
     async def ribbonStatus(self, interaction: discord.Interaction) -> None:
         if not interaction.guild or not isinstance(interaction.user, discord.Member):
             return await interaction.response.send_message(
@@ -96,11 +90,9 @@ class RibbonCog(RibbonCogMixin, commands.Cog):
                 name="Your Open Request",
                 value="You currently have an open ribbon request.",
                 inline=False,
-            )
+        )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @ribbonGroup.command(name="assets", description="List available ribbon asset names.")
-    @app_commands.describe(category="Optional category filter.")
     async def ribbonAssets(
         self,
         interaction: discord.Interaction,
@@ -141,7 +133,6 @@ class RibbonCog(RibbonCogMixin, commands.Cog):
             lines.append(f"{key}: {len(self.assetsByCategory.get(key, []))}")
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
-    @ribbonGroup.command(name="sync-catalog", description="Force a catalog re-scan from ribbon folders.")
     async def ribbonSyncCatalog(self, interaction: discord.Interaction) -> None:
         if not interaction.guild or not isinstance(interaction.user, discord.Member):
             return await interaction.response.send_message(
@@ -171,14 +162,6 @@ class RibbonCog(RibbonCogMixin, commands.Cog):
             ephemeral=True,
         )
 
-    @ribbonGroup.command(name="render", description="Render a ribbon image from comma-separated names.")
-    @app_commands.describe(
-        selection="Comma-separated ribbon/commendation/award names.",
-        nameplate="Nameplate text.",
-        strict="Fail if unknown names are included.",
-        allow_blank_name="Allow blank nameplate for new image.",
-    )
-    @app_commands.rename(allow_blank_name="allow-blank-name")
     async def ribbonRender(
         self,
         interaction: discord.Interaction,
@@ -237,7 +220,7 @@ class RibbonCog(RibbonCogMixin, commands.Cog):
             except OSError:
                 pass
 
-    @ribbonsGroup.command(name="request", description="Create a ribbon delta request (add/remove).")
+    @ribbonGroup.command(name="request", description="Create a ribbon delta request (add/remove).")
     async def ribbonsRequest(self, interaction: discord.Interaction) -> None:
         if not interaction.guild or not isinstance(interaction.user, discord.Member):
             return await interaction.response.send_message(
@@ -291,8 +274,6 @@ class RibbonCog(RibbonCogMixin, commands.Cog):
         except (discord.NotFound, discord.HTTPException):
             view.boundMessage = None
 
-    @ribbonsGroup.command(name="profile", description="View a ribbon profile.")
-    @app_commands.describe(user="Optional user (staff only for other users).")
     async def ribbonsProfile(
         self,
         interaction: discord.Interaction,

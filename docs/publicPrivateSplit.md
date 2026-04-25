@@ -27,6 +27,7 @@ Right now, private-only pieces include things like:
 
 - server safety
 - runtime control
+- DM-only runtime secret management
 - private plugin wrappers
 
 The private optional extensions currently listed are:
@@ -62,6 +63,7 @@ That target can be a normal folder or a cloned working copy of the public repo. 
 That export currently:
 
 - strips known private-only paths
+- strips private runtime secret command hooks from public files
 - rewrites the private extension list to an empty scaffold
 - sanitizes parts of `config.py`
 - runs a secret scan

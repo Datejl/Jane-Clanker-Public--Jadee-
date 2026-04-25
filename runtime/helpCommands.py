@@ -8,6 +8,7 @@ import discord
 from discord import app_commands
 
 import config
+from runtime import commandPermissions as runtimeCommandPermissions
 from runtime import permissions as runtimePermissions
 
 _kebabCasePattern = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -82,6 +83,7 @@ def collectSlashHelpEntries(
             return
 
         path = "/" + " ".join(pathParts)
+        runtimeCommandPermissions.recordCommandPath(path, command)
         description = str(getattr(command, "description", "") or "").strip() or "No description."
         entriesByPath[path] = description
 
@@ -99,6 +101,9 @@ def collectSlashHelpEntries(
 
 def slashPermissionHint(path: str) -> str:
     normalizedPath = str(path or "").strip().lower()
+    centralHint = runtimeCommandPermissions.permissionHintForPath(normalizedPath)
+    if centralHint:
+        return centralHint
 
     instructorRoleId = runtimePermissions.toPositiveInt(getattr(config, "instructorRoleId", 0))
     recruiterRoleId = runtimePermissions.toPositiveInt(getattr(config, "recruiterRoleId", 0))
@@ -135,10 +140,11 @@ def slashPermissionHint(path: str) -> str:
         "/recruitment": (
             f"Recruiter role required ({runtimePermissions.formatRoleIds([recruiterRoleId] if recruiterRoleId > 0 else [])})."
         ),
+        "/recruitment-time-log": (
+            f"Recruiter role required ({runtimePermissions.formatRoleIds([recruiterRoleId] if recruiterRoleId > 0 else [])})."
+        ),
         "/recruitment-patrol": (
-            "Solo: recruiter role "
-            f"({runtimePermissions.formatRoleIds([recruiterRoleId] if recruiterRoleId > 0 else [])}). "
-            "Group: host roles "
+            "Group patrol host roles "
             f"({runtimePermissions.formatRoleIds(groupPatrolHostRoles)})"
             + (" with recruiter fallback." if groupPatrolHostRoles else ".")
         ),
@@ -151,11 +157,6 @@ def slashPermissionHint(path: str) -> str:
             "Requires ORBAT submitter or reviewer roles "
             f"({runtimePermissions.formatRoleIds(orbatSubmitterRoles + [roleId for roleId in orbatReviewerRoles if roleId not in orbatSubmitterRoles])})."
         ),
-        "/orbat": (
-            "Public lookup enabled." if allowPublicOrbatLookup else
-            f"Reviewer roles required ({runtimePermissions.formatRoleIds(orbatReviewerRoles)})."
-        ),
-        "/orbat-pending": f"Reviewer roles required ({runtimePermissions.formatRoleIds(orbatReviewerRoles)}).",
         "/loa-request": (
             "Requires ORBAT submitter or reviewer roles "
             f"({runtimePermissions.formatRoleIds(orbatSubmitterRoles + [roleId for roleId in orbatReviewerRoles if roleId not in orbatSubmitterRoles])})."
@@ -179,12 +180,7 @@ def slashPermissionHint(path: str) -> str:
             f"({runtimePermissions.formatRoleIds(appAdminRoles + [roleId for roleId in appGlobalReviewerRoles if roleId not in appAdminRoles])})."
         ),
         "/apps force-approve": f"Application admin roles required ({runtimePermissions.formatRoleIds(appAdminRoles)}).",
-        "/ribbon status": f"Ribbon manager roles required ({runtimePermissions.formatRoleIds(ribbonManagerRoles)}).",
-        "/ribbon assets": f"Ribbon manager roles required ({runtimePermissions.formatRoleIds(ribbonManagerRoles)}).",
-        "/ribbon sync-catalog": f"Ribbon manager roles required ({runtimePermissions.formatRoleIds(ribbonManagerRoles)}).",
-        "/ribbon render": f"Ribbon manager roles required ({runtimePermissions.formatRoleIds(ribbonManagerRoles)}).",
-        "/ribbons request": "Open to all users (cooldown applies for non-managers).",
-        "/ribbons profile": "Self profile is open; viewing other users requires ribbon manager roles.",
+        "/ribbon request": "Open to all users (cooldown applies for non-managers).",
         "/request-payment": (
             "ANRD payment submitter roles required "
             f"({runtimePermissions.formatRoleIds(anrdSubmitterRoles)}), with admin/manage-server bypass."
@@ -236,14 +232,11 @@ def slashPermissionHint(path: str) -> str:
             f"({runtimePermissions.formatRoleIds([roleId for roleId in [mrRoleId, hrRoleId] if roleId > 0])}) "
             "or administrator/manage-server."
         ),
-        "/reminder add": "Open to everyone in recognized servers.",
-        "/reminder team": (
-            "MR/HR roles required "
+        "/reminder": (
+            "Personal/list/cancel actions are open to everyone in recognized servers. Team reminders require MR/HR roles "
             f"({runtimePermissions.formatRoleIds([roleId for roleId in [mrRoleId, hrRoleId] if roleId > 0])}) "
             "or administrator/manage-server."
         ),
-        "/reminder list": "Open to everyone in recognized servers.",
-        "/reminder cancel": "Open to everyone; administrators/manage-server may cancel others.",
         "/suggestion submit": "Open to everyone in recognized servers.",
         "/suggestion list": "Open to everyone in recognized servers.",
         "/suggestion status-board": (
@@ -251,12 +244,9 @@ def slashPermissionHint(path: str) -> str:
             f"({runtimePermissions.formatRoleIds(runtimePermissions.normalizeRoleIds(getattr(config, 'suggestionReviewerRoleIds', [])))}) "
             "or administrator/manage-server."
         ),
-        "/notes-add": "Administrator/manage-server only. Test server only.",
-        "/notes-list": "Administrator/manage-server only. Test server only.",
-        "/notes-delete": "Administrator/manage-server only. Test server only.",
         "/federation-link": "Administrator/manage-server only. Test server only.",
-        "/federation-unlink": "Administrator/manage-server only.",
-        "/federation-list": "Administrator/manage-server only.",
+        "/federation-unlink": "Administrator/manage-server only. Test server only.",
+        "/federation-list": "Administrator/manage-server only. Test server only.",
         "/post-role-menu": "Administrator/manage-server only.",
         "/ops": "Configured ops allowlist only.",
         "/snapshot-menu": "Administrator/manage-server plus configured snapshot allowlist.",
@@ -419,13 +409,13 @@ def _categorizeSlashPath(path: str) -> str:
         return "general"
     if normalized.startswith(("/orientation", "/cohost", "/schedule-event", "/events", "/best-of")):
         return "sessions"
-    if normalized.startswith(("/recruitment", "/recruitment-patrol", "/orbat-request", "/orbat-pending", "/orbat", "/loa-request", "/division-clockin")):
+    if normalized.startswith(("/recruitment", "/recruitment-time-log", "/recruitment-patrol", "/orbat-request", "/loa-request", "/division-clockin")):
         return "recruitment"
     if normalized.startswith(("/bg-check", "/bg-flag")):
         return "bg"
     if normalized.startswith(("/applications", "/applications-hub-post", "/applications-hub-post-all", "/apps ", "/apps")):
         return "applications"
-    if normalized.startswith(("/ribbon ", "/ribbon", "/ribbons ", "/ribbons", "/request-payment")):
+    if normalized.startswith(("/ribbon ", "/ribbon", "/request-payment")):
         return "awards"
     if normalized.startswith((
         "/snapshot-menu",
@@ -436,7 +426,6 @@ def _categorizeSlashPath(path: str) -> str:
         "/curfew",
         "/jail",
         "/unjail",
-        "/notes-",
         "/federation-",
     )):
         return "moderation"

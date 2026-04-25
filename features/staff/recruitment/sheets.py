@@ -33,8 +33,19 @@ def _normalize(value: str) -> str:
     return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
 
 
+def _cleanRobloxUsername(value: Any) -> str:
+    text = str(value or "").strip()
+    for marker in ("\u200b", "\u200c", "\u200d", "\ufeff"):
+        text = text.replace(marker, "")
+    return "".join(ch for ch in text if not ch.isspace())
+
+
+def _usernameLookupKey(value: Any) -> str:
+    return _cleanRobloxUsername(value).casefold()
+
+
 def _usernameSortTuple(value: Any) -> tuple[str, str]:
-    raw = str(value or "").strip()
+    raw = _cleanRobloxUsername(value)
     return (_normalize(raw), raw.casefold())
 
 
@@ -778,6 +789,9 @@ def _nextPromotionRank(currentRank: str, allTimePoints: int) -> Optional[str]:
 
 
 def _insertMissingMemberRow(service, header: Dict[str, str], robloxUsername: str) -> Optional[int]:
+    robloxUsername = _cleanRobloxUsername(robloxUsername)
+    if not robloxUsername:
+        return None
     usernameCol = header["robloxUsername"]
     rankCol = header["rsRank"]
     _ensureSectionSpacerRows(service, usernameCol)
@@ -1229,16 +1243,16 @@ def _findRowByRobloxUsername(service, usernameColumn: str, rankColumn: str, user
     )
     usernames = valueRanges[0].get("values", []) if len(valueRanges) > 0 else []
     ranks = valueRanges[1].get("values", []) if len(valueRanges) > 1 else []
-    target = username.strip().lower()
+    target = _usernameLookupKey(username)
     totalRows = max(len(usernames), len(ranks))
     for idx in range(1, totalRows + 1):
         usernameRow = usernames[idx - 1] if idx - 1 < len(usernames) else []
         rankRow = ranks[idx - 1] if idx - 1 < len(ranks) else []
-        usernameCell = str(usernameRow[0]).strip() if usernameRow else ""
+        usernameCell = _cleanRobloxUsername(usernameRow[0]) if usernameRow else ""
         rankCell = str(rankRow[0]).strip() if rankRow else ""
         if not _isWritableMemberRow(usernameCell, rankCell):
             continue
-        if usernameCell.lower() == target:
+        if _usernameLookupKey(usernameCell) == target:
             return idx
     return None
 
@@ -1440,7 +1454,7 @@ def syncRecruitmentRolePlacement(
     hasAnrorsRmPlusRole: bool,
     organizeAfter: bool = True,
 ) -> dict:
-    username = str(robloxUsername or "").strip()
+    username = _cleanRobloxUsername(robloxUsername)
     if not username:
         return {"ok": False, "reason": "missing-username"}
 
@@ -1540,6 +1554,7 @@ def applyApprovedLog(
     patrolDelta: int,
     organizeAfter: bool = True,
 ) -> bool:
+    robloxUsername = _cleanRobloxUsername(robloxUsername)
     if not robloxUsername:
         return False
 
@@ -1591,6 +1606,7 @@ def applyApprovedLog(
     quotaStatus = _computeQuotaStatus(rankForQuota, monthly, patrols, currentQuotaStatus)
 
     data = [
+        {"range": _range(header["robloxUsername"], row), "values": [[robloxUsername]]},
         {"range": ranges["monthly"], "values": [[monthly]]},
         {"range": ranges["allTime"], "values": [[allTime]]},
         {"range": ranges["patrols"], "values": [[patrols]]},
@@ -1611,18 +1627,12 @@ def applyApprovedLog(
     return True
 
 
-def applyApprovedLogsBatch(
-    updates: list[dict],
-    organizeAfter: bool = True,
-) -> dict:
-    if not updates:
-        return {"updatedUsers": 0, "updatedRows": 0, "organized": 0}
-
+def _aggregateApprovedLogUpdates(updates: list[dict]) -> dict[str, dict[str, int | str]]:
     aggregate: dict[str, dict[str, int | str]] = {}
     for raw in updates:
         if not isinstance(raw, dict):
             continue
-        username = str(raw.get("robloxUsername") or "").strip()
+        username = _cleanRobloxUsername(raw.get("robloxUsername"))
         if not username:
             continue
         try:
@@ -1639,7 +1649,7 @@ def applyApprovedLogsBatch(
             hostedPatrolDelta = 0
         if pointsDelta == 0 and patrolDelta == 0 and hostedPatrolDelta == 0:
             continue
-        key = username.lower()
+        key = _usernameLookupKey(username)
         slot = aggregate.get(key)
         if slot is None:
             aggregate[key] = {
@@ -1652,15 +1662,10 @@ def applyApprovedLogsBatch(
             slot["pointsDelta"] = int(slot.get("pointsDelta", 0)) + pointsDelta
             slot["patrolDelta"] = int(slot.get("patrolDelta", 0)) + patrolDelta
             slot["hostedPatrolDelta"] = int(slot.get("hostedPatrolDelta", 0)) + hostedPatrolDelta
+    return aggregate
 
-    if not aggregate:
-        return {"updatedUsers": 0, "updatedRows": 0, "organized": 0}
 
-    service = _getService()
-    sheetId = _spreadsheetId()
-    sheetTabId = _getSheetTabId(service)
-    header = _loadHeaderMap(service)
-
+def _loadWritableMemberRowsByUsername(service, sheetId: str, header: Dict[str, str]) -> dict[str, int]:
     usernameCol = header["robloxUsername"]
     rankCol = header["rsRank"]
     usernameAndRank = (
@@ -1683,12 +1688,20 @@ def applyApprovedLogsBatch(
     for idx in range(1, totalRows + 1):
         usernameRow = usernames[idx - 1] if idx - 1 < len(usernames) else []
         rankRow = ranks[idx - 1] if idx - 1 < len(ranks) else []
-        usernameCell = str(usernameRow[0]).strip() if usernameRow else ""
+        usernameCell = _cleanRobloxUsername(usernameRow[0]) if usernameRow else ""
         rankCell = str(rankRow[0]).strip() if rankRow else ""
         if not _isWritableMemberRow(usernameCell, rankCell):
             continue
-        rowByUsername[usernameCell.lower()] = idx
+        rowByUsername[_usernameLookupKey(usernameCell)] = idx
+    return rowByUsername
 
+
+def _resolveApprovedLogRows(
+    service,
+    header: Dict[str, str],
+    aggregate: dict[str, dict[str, int | str]],
+    rowByUsername: dict[str, int],
+) -> dict[int, dict[str, int | str]]:
     updatesByRow: dict[int, dict[str, int | str]] = {}
     for key, entry in aggregate.items():
         row = rowByUsername.get(key)
@@ -1697,12 +1710,17 @@ def applyApprovedLogsBatch(
             if not row:
                 continue
             rowByUsername[key] = row
+        entry["robloxUsername"] = _cleanRobloxUsername(entry.get("robloxUsername"))
         updatesByRow[row] = entry
+    return updatesByRow
 
-    if not updatesByRow:
-        return {"updatedUsers": 0, "updatedRows": 0, "organized": 0}
 
-    rows = sorted(updatesByRow.keys())
+def _loadApprovedLogCurrentRows(
+    service,
+    sheetId: str,
+    header: Dict[str, str],
+    rows: list[int],
+) -> dict[int, dict[str, str]]:
     perRowRanges: list[str] = []
     rangeMeta: list[tuple[int, str]] = []
     keys = ("rsRank", "monthly", "allTime", "patrols", "quota")
@@ -1724,7 +1742,15 @@ def applyApprovedLogsBatch(
         values = fetchedRanges[idx].get("values", []) if idx < len(fetchedRanges) else []
         value = values[0][0] if values and values[0] else ""
         currentByRow.setdefault(row, {})[key] = str(value)
+    return currentByRow
 
+
+def _buildApprovedLogBatchData(
+    header: Dict[str, str],
+    rows: list[int],
+    currentByRow: dict[int, dict[str, str]],
+    updatesByRow: dict[int, dict[str, int | str]],
+) -> tuple[list[dict], list[int]]:
     batchData: list[dict] = []
     touchedRows: list[int] = []
     for row in rows:
@@ -1743,6 +1769,7 @@ def applyApprovedLogsBatch(
         rankForQuota = promotedRank or currentRank
         quotaStatus = _computeQuotaStatus(rankForQuota, monthly, patrols, currentQuotaStatus)
 
+        batchData.append({"range": _range(header["robloxUsername"], row), "values": [[entry["robloxUsername"]]]})
         batchData.append({"range": _range(header["monthly"], row), "values": [[monthly]]})
         batchData.append({"range": _range(header["allTime"], row), "values": [[allTime]]})
         batchData.append({"range": _range(header["patrols"], row), "values": [[patrols]]})
@@ -1750,6 +1777,33 @@ def applyApprovedLogsBatch(
         if promotedRank and _normalize(promotedRank) != _normalize(currentRank):
             batchData.append({"range": _range(header["rsRank"], row), "values": [[promotedRank]]})
         touchedRows.append(row)
+    return batchData, touchedRows
+
+
+def applyApprovedLogsBatch(
+    updates: list[dict],
+    organizeAfter: bool = True,
+) -> dict:
+    if not updates:
+        return {"updatedUsers": 0, "updatedRows": 0, "organized": 0}
+
+    aggregate = _aggregateApprovedLogUpdates(updates)
+    if not aggregate:
+        return {"updatedUsers": 0, "updatedRows": 0, "organized": 0}
+
+    service = _getService()
+    sheetId = _spreadsheetId()
+    sheetTabId = _getSheetTabId(service)
+    header = _loadHeaderMap(service)
+
+    rowByUsername = _loadWritableMemberRowsByUsername(service, sheetId, header)
+    updatesByRow = _resolveApprovedLogRows(service, header, aggregate, rowByUsername)
+    if not updatesByRow:
+        return {"updatedUsers": 0, "updatedRows": 0, "organized": 0}
+
+    rows = sorted(updatesByRow.keys())
+    currentByRow = _loadApprovedLogCurrentRows(service, sheetId, header, rows)
+    batchData, touchedRows = _buildApprovedLogBatchData(header, rows, currentByRow, updatesByRow)
 
     service.spreadsheets().values().batchUpdate(
         spreadsheetId=sheetId,

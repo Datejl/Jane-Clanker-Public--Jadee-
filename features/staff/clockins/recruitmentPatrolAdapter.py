@@ -6,7 +6,14 @@ from features.staff.recruitment import service as recruitmentService
 
 
 class RecruitmentPatrolAdapter:
-    async def createSession(self, guildId: int, channelId: int, hostId: int, **kwargs) -> int:
+    async def createSession(
+        self,
+        guildId: int,
+        channelId: int,
+        hostId: int,
+        maxAttendeeLimit: int = 30,
+        **kwargs,
+    ) -> int:
         return await recruitmentService.createRecruitmentPatrolSession(
             guildId=guildId,
             channelId=channelId,

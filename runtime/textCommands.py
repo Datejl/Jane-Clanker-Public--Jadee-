@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+import aiohttp
 import discord
 
 from db.sqlite import dbPath as sqliteDbPath
@@ -17,9 +18,10 @@ from runtime import bgQueueCommand as runtimeBgQueueCommand
 from runtime import copyServerState as runtimeCopyServerState
 from runtime import helpMenu as runtimeHelpMenu
 from runtime import interaction as interactionRuntime
+from runtime import normalization
 from runtime import orgProfiles
 from runtime import webhooks as runtimeWebhooks
-from features.staff.sessions import bgBuckets
+from features.staff.sessions import bgSpreadsheetQueue
 
 try:
     from features.operations.serverSafety.filters import filterLiveChannels, filterSnapshotChannelRows
@@ -1350,12 +1352,6 @@ class TextCommandRouter:
                 )
                 return False, "No members currently have the Pending Background Check role."
 
-            await progress.update(
-                stepIndex=3,
-                detail="Creating the BG queue session and attendee list...",
-                pendingCount=len(pendingMembers),
-            )
-
             me = getattr(guild, "me", None)
             sourceChannel = getattr(sourceMessage, "channel", None)
             if (
@@ -1369,65 +1365,39 @@ class TextCommandRouter:
                 except Exception:
                     pass
 
-            sessionId = await self.sessionService.createSession(
-                guildId=int(sourceGuild.id),
-                channelId=int(getattr(channel, "id", 0) or 0),
-                messageId=int(getattr(sourceMessage, "id", 0) or 0),
-                sessionType="bg-check",
-                hostId=int(actor.id),
-                password=os.urandom(8).hex(),
+            spreadsheet = await bgSpreadsheetQueue.createSpreadsheetForUserIds(
+                [int(member.id) for member in pendingMembers],
+                sourceGuild=sourceGuild,
+                titlePrefix="BGC",
+                guildId=int(getattr(guild, "id", 0) or 0),
+                progress=progress,
             )
-            attendeeUserIds = [int(member.id) for member in pendingMembers]
-            await self.sessionService.addAttendeesBulk(
-                int(sessionId),
-                attendeeUserIds,
-                examGrade="PASS",
-            )
-            bucketCounts = await self.sessionViews.ensureBgReviewBuckets(
-                self.botClient,
-                int(sessionId),
-                sourceGuild,
-            )
-            adultCount = int(bucketCounts.get(bgBuckets.adultBgReviewBucket, 0) or 0)
-            minorCount = int(bucketCounts.get(bgBuckets.minorBgReviewBucket, 0) or 0)
-
-            await progress.update(
-                stepIndex=4,
-                detail=(
-                    "Posting the split BG queues...\n"
-                    f"+18: `{adultCount}` attendee(s)\n"
-                    f"-18: `{minorCount}` attendee(s)"
-                ),
-                pendingCount=len(pendingMembers),
-            )
-            await self.sessionViews.postBgQueue(self.botClient, sessionId, sourceGuild)
-            updatedSession = await self.sessionService.getSession(int(sessionId))
-            adultQueueMessageId = int((updatedSession or {}).get("bgQueueMessageId") or 0)
-            minorQueueMessageId = int((updatedSession or {}).get("bgQueueMinorMessageId") or 0)
-            if adultQueueMessageId <= 0 and minorQueueMessageId <= 0:
+            if not spreadsheet.url:
                 await progress.update(
                     stepIndex=5,
-                    detail="BG queue channels are not configured or inaccessible.",
+                    detail=spreadsheet.skipped_reason or "BGC spreadsheet creation failed.",
                     pendingCount=len(pendingMembers),
                     failed=True,
                 )
-                return False, "BG queue channels are not configured or inaccessible."
+                return False, spreadsheet.skipped_reason or "BGC spreadsheet creation failed."
+
+            publicMessage = f"BGC Spreadsheet created: {spreadsheet.url}"
+            await channel.send(
+                publicMessage,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
             await progress.update(
                 stepIndex=5,
                 detail=(
-                    f"Background-check queues created for `{len(pendingMembers)}` member(s).\n"
-                    f"+18 routed: `{adultCount}`\n"
-                    f"-18 routed: `{minorCount}`\n"
-                    "Initial Roblox scans will continue in the background."
+                    f"BGC spreadsheet created for `{spreadsheet.row_count}` member(s).\n"
+                    f"Inventory private: `{spreadsheet.private_count}`\n"
+                    f"Inventory public: `{spreadsheet.public_count}`\n"
+                    f"Inventory unknown: `{spreadsheet.unknown_count}`"
                 ),
                 pendingCount=len(pendingMembers),
                 finished=True,
             )
-            return True, (
-                f"Background-check queues created for `{len(pendingMembers)}` member(s).\n"
-                f"+18 routed: `{adultCount}`\n"
-                f"-18 routed: `{minorCount}`"
-            )
+            return True, publicMessage
         except Exception as exc:
             await progress.update(
                 stepIndex=5,
@@ -1450,10 +1420,11 @@ class TextCommandRouter:
         return self.discordTimestamp(parsed.astimezone(timezone.utc), "f")
 
     def firstLowerToken(self, content: str) -> str:
-        stripped = content.strip()
-        if not stripped:
-            return ""
-        return stripped.split(maxsplit=1)[0].lower()
+        token, _ = normalization.commandParts(content)
+        return token
+
+    def indexToken(self, content: str, index: int) -> str:
+        return normalization.tokenAt(content, index)
 
     def _formatTerminalTime(self, rawValue: object) -> str:
         rawText = str(rawValue or "").strip()
@@ -1613,6 +1584,53 @@ class TextCommandRouter:
             body = body[:1897] + "..."
         return f"```ansi\n{body}\n```"
 
+    async def _deleteSourceIfManageable(self, message: discord.Message) -> bool:
+        guild = message.guild
+        if guild is None or guild.me is None:
+            return False
+        if not message.channel.permissions_for(guild.me).manage_messages:
+            return False
+        return await interactionRuntime.safeMessageDelete(message)
+
+    async def handleUsernameToUserId(self, message: discord.Message) -> bool:
+        if message.author.bot or not message.content:
+            return False
+        if not message.guild or not isinstance(message.author, discord.Member):
+            return False
+
+        token = self.firstLowerToken(message.content or "")
+        if token != "?ruid": #roblox-user-id
+            return False
+
+        await self._deleteSourceIfManageable(message)
+
+        robloxAPIEndpoint = "https://users.roblox.com/v1/usernames/users"
+        robloxUserName = self.indexToken(message.content or "", 1)
+        if not robloxUserName:
+            await message.channel.send(content="Usage: `?ruid roblox_username`")
+            return True
+
+        payload = {
+            "usernames": [robloxUserName],
+            "excludeBannedUsers": True
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url=robloxAPIEndpoint, json=payload) as resp:
+                if resp.status != 200:
+                    await message.channel.send(content="There was an error with that username.")
+                    return False
+                data = await resp.json()
+                if not data.get("data"):
+                    await message.channel.send(content="I could not find that Roblox username.")
+                    return True
+                userId = data["data"][0]["id"]
+                await message.channel.send(content=f"{userId}")
+
+
+        return True
+
+
     async def handleJaneHelp(self, message: discord.Message) -> bool:
         if message.author.bot or not message.content:
             return False
@@ -1623,11 +1641,7 @@ class TextCommandRouter:
         if token != ":)help":
             return False
 
-        if message.guild.me and message.channel.permissions_for(message.guild.me).manage_messages:
-            try:
-                await message.delete()
-            except Exception:
-                pass
+        await self._deleteSourceIfManageable(message)
 
         sections = self.helpCommands.buildHelpSections(
             self.botClient.tree,
@@ -1691,11 +1705,7 @@ class TextCommandRouter:
                 pass
             return True
 
-        if message.guild.me and message.channel.permissions_for(message.guild.me).manage_messages:
-            try:
-                await message.delete()
-            except Exception:
-                pass
+        await self._deleteSourceIfManageable(message)
 
         now = datetime.now(timezone.utc)
         uptime = self.formatUptime(now - self.botStartedAt)
@@ -1858,18 +1868,10 @@ class TextCommandRouter:
 
         allowedUserId = self._janeTerminalAllowedUserId()
         if allowedUserId <= 0 or int(message.author.id) != allowedUserId:
-            if message.guild.me and message.channel.permissions_for(message.guild.me).manage_messages:
-                try:
-                    await message.delete()
-                except Exception:
-                    pass
+            await self._deleteSourceIfManageable(message)
             return True
 
-        if message.guild.me and message.channel.permissions_for(message.guild.me).manage_messages:
-            try:
-                await message.delete()
-            except Exception:
-                pass
+        await self._deleteSourceIfManageable(message)
 
         terminalContent = self._buildJaneTerminalContent()
         sentViaWebhook = await self.sendTerminalWebhookMessage(message, terminalContent)
@@ -1891,11 +1893,7 @@ class TextCommandRouter:
         if not message.guild or not isinstance(message.author, discord.Member):
             return True
 
-        if message.guild.me and message.channel.permissions_for(message.guild.me).manage_messages:
-            try:
-                await message.delete()
-            except Exception:
-                pass
+        await self._deleteSourceIfManageable(message)
 
         try:
             await message.channel.send(
@@ -1922,11 +1920,7 @@ class TextCommandRouter:
         if not message.guild or not isinstance(message.author, discord.Member):
             return True
 
-        if message.guild.me and message.channel.permissions_for(message.guild.me).manage_messages:
-            try:
-                await message.delete()
-            except Exception:
-                pass
+        await self._deleteSourceIfManageable(message)
 
         status = str(self.allowGuildForCommands(int(message.guild.id)) or "invalid").strip().lower()
         if status == "already":
@@ -1971,11 +1965,7 @@ class TextCommandRouter:
                 pass
             return True
 
-        if message.guild.me and message.channel.permissions_for(message.guild.me).manage_messages:
-            try:
-                await message.delete()
-            except Exception:
-                pass
+        await self._deleteSourceIfManageable(message)
 
         try:
             await message.channel.send(
@@ -2200,11 +2190,7 @@ class TextCommandRouter:
             await message.channel.send("No background-check actions are logged yet.")
             return True
 
-        if message.guild.me and message.channel.permissions_for(message.guild.me).manage_messages:
-            try:
-                await message.delete()
-            except Exception:
-                pass
+        await self._deleteSourceIfManageable(message)
 
         lines: list[str] = []
         for idx, row in enumerate(rows, start=1):

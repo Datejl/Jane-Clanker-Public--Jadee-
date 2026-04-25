@@ -46,18 +46,20 @@ async def createRecruitmentSubmission(
     passedOrientation: bool,
     imageUrls: List[str],
     points: int,
+    recruitDisplayName: str = "",
 ) -> int:
     return await executeReturnId(
         """
         INSERT INTO recruitment_submissions
-            (guildId, channelId, messageId, submitterId, recruitUserId, passedOrientation, imageUrls, status, points)
-        VALUES (?, ?, 0, ?, ?, ?, ?, 'PENDING', ?)
+            (guildId, channelId, messageId, submitterId, recruitUserId, recruitDisplayName, passedOrientation, imageUrls, status, points)
+        VALUES (?, ?, 0, ?, ?, ?, ?, ?, 'PENDING', ?)
         """,
         (
             guildId,
             channelId,
             submitterId,
             recruitUserId,
+            str(recruitDisplayName or "").strip(),
             1 if passedOrientation else 0,
             _jsonText(imageUrls),
             points,

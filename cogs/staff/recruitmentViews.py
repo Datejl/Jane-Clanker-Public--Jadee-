@@ -8,13 +8,12 @@ from typing import Optional, Sequence
 import discord
 
 import config
+from features.staff.recruitment import outputs as recruitmentOutputs
 from features.staff.recruitment import rendering as recruitmentRendering
 from features.staff.recruitment import service as recruitmentService
-from features.staff.recruitment import sheets as recruitmentSheets
 from runtime import interaction as interactionRuntime
-from runtime import orbatAudit as orbatAuditRuntime
-from runtime import taskBudgeter
-from features.staff.sessions import roblox
+from runtime import normalization
+from runtime import permissions as runtimePermissions
 
 
 log = logging.getLogger(__name__)
@@ -22,9 +21,7 @@ joinButtonEmoji = "\N{WHITE HEAVY CHECK MARK}"
 
 
 def _hasRole(member: discord.Member, roleId: Optional[int]) -> bool:
-    if not roleId:
-        return False
-    return any(role.id == int(roleId) for role in member.roles)
+    return runtimePermissions.hasAnyRole(member, [roleId])
 
 
 def _parseParticipantUserIds(raw: Optional[str]) -> list[int]:
@@ -36,15 +33,7 @@ def _parseParticipantUserIds(raw: Optional[str]) -> list[int]:
         return []
     if not isinstance(data, list):
         return []
-    out: list[int] = []
-    for value in data:
-        try:
-            userId = int(value)
-        except (TypeError, ValueError):
-            continue
-        if userId > 0:
-            out.append(userId)
-    return out
+    return normalization.normalizeIntList(data)
 
 
 def _setAllButtonsDisabled(view: discord.ui.View, disabled: bool) -> None:
@@ -194,8 +183,8 @@ class RecruitmentReviewView(discord.ui.View):
         await self._syncRecruitmentSheet(
             [submitterId],
             points,
-            patrolDelta=1,
-            hostedPatrolDelta=1,
+            patrolDelta=0,
+            hostedPatrolDelta=0,
         )
 
     async def _logRecruitmentSheetChange(
@@ -205,16 +194,12 @@ class RecruitmentReviewView(discord.ui.View):
         change: str,
         details: str,
     ) -> None:
-        try:
-            await orbatAuditRuntime.sendOrbatChangeLog(
-                self.cog.bot,
-                change=change,
-                authorizedBy=f"<@{int(reviewerId)}>",
-                details=details,
-                sheetKey="recruitment",
-            )
-        except Exception:
-            log.exception("Failed to post recruitment ORBAT audit log.")
+        await recruitmentOutputs.sendRecruitmentSheetChangeLog(
+            self.cog.bot,
+            reviewerId=reviewerId,
+            change=change,
+            details=details,
+        )
 
     async def _syncRecruitmentSheet(
         self,
@@ -223,63 +208,13 @@ class RecruitmentReviewView(discord.ui.View):
         patrolDelta: int,
         hostedPatrolDelta: int = 0,
     ) -> None:
-        if not getattr(config, "recruitmentSpreadsheetId", ""):
-            return
-        uniqueUserIds: list[int] = []
-        seenUserIds: set[int] = set()
-        for rawUserId in discordUserIds:
-            try:
-                userId = int(rawUserId)
-            except (TypeError, ValueError):
-                continue
-            if userId <= 0 or userId in seenUserIds:
-                continue
-            seenUserIds.add(userId)
-            uniqueUserIds.append(userId)
-
-        lookupConcurrency = max(1, int(getattr(config, "recruitmentRoverLookupConcurrency", 8) or 8))
-        semaphore = asyncio.Semaphore(lookupConcurrency)
-
-        async def _resolveRobloxUsername(userId: int) -> Optional[tuple[int, str]]:
-            try:
-                async with semaphore:
-                    roverResult = await roblox.fetchRobloxUser(int(userId))
-            except Exception:
-                log.exception("RoVer lookup failed while syncing recruitment sheet for %s", userId)
-                return None
-
-            robloxUsername = roverResult.robloxUsername
-            if not robloxUsername:
-                return None
-            return (userId, robloxUsername)
-
-        lookupResults = await asyncio.gather(
-            *(_resolveRobloxUsername(userId) for userId in uniqueUserIds),
-            return_exceptions=False,
+        await recruitmentOutputs.syncApprovedLogsToSheet(
+            discordUserIds,
+            pointsDelta,
+            patrolDelta,
+            hostedPatrolDelta,
+            organizeAfter=True,
         )
-        resolvedUsernames = [result for result in lookupResults if result is not None]
-
-        if not resolvedUsernames:
-            return
-
-        updates = [
-            {
-                "robloxUsername": robloxUsername,
-                "pointsDelta": int(pointsDelta),
-                "patrolDelta": int(patrolDelta),
-                "hostedPatrolDelta": int(hostedPatrolDelta),
-            }
-            for _, robloxUsername in resolvedUsernames
-        ]
-        try:
-            await taskBudgeter.runSheetsThread(
-                recruitmentSheets.applyApprovedLogsBatch,
-                updates,
-                True,
-            )
-        except Exception:
-            affected = ", ".join(f"{userId}:{robloxUsername}" for userId, robloxUsername in resolvedUsernames)
-            log.exception("Recruitment sheet batch sync failed for %s", affected)
 
     async def _buildSubmissionEmbed(self) -> Optional[discord.Embed]:
         submission = await self._getSubmission()

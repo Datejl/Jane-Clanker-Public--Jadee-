@@ -1,3 +1,5 @@
+# Reaction roles by idkpine
+
 import aiosqlite
 import asyncio
 import logging
@@ -9,7 +11,7 @@ _dbConn: Optional[aiosqlite.Connection] = None
 _dbConnInitLock = asyncio.Lock()
 _dbWriteLock = asyncio.Lock()
 log = logging.getLogger(__name__)
-_schemaVersionTarget = 12
+_schemaVersionTarget = 14
 _T = TypeVar("_T")
 
 
@@ -105,6 +107,33 @@ async def initDb():
             createdAt TEXT NOT NULL DEFAULT (datetime('now'))
         );
         """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS bg_intelligence_reports (
+            reportId INTEGER PRIMARY KEY AUTOINCREMENT,
+            guildId INTEGER NOT NULL,
+            channelId INTEGER NOT NULL DEFAULT 0,
+            reviewerId INTEGER NOT NULL,
+            targetUserId INTEGER NOT NULL,
+            robloxUserId INTEGER,
+            robloxUsername TEXT,
+            reviewBucket TEXT NOT NULL DEFAULT '',
+            score INTEGER NOT NULL,
+            band TEXT NOT NULL,
+            confidence INTEGER NOT NULL,
+            scored INTEGER NOT NULL DEFAULT 1,
+            outcome TEXT NOT NULL DEFAULT 'scored',
+            hardMinimum INTEGER NOT NULL DEFAULT 0,
+            signalJson TEXT NOT NULL DEFAULT '[]',
+            reportJson TEXT NOT NULL DEFAULT '{}',
+            createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        """)
+        for statement in (
+            "ALTER TABLE bg_intelligence_reports ADD COLUMN scored INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE bg_intelligence_reports ADD COLUMN outcome TEXT NOT NULL DEFAULT 'scored'",
+            "ALTER TABLE bg_intelligence_reports ADD COLUMN hardMinimum INTEGER NOT NULL DEFAULT 0",
+        ):
+            await _executeOptional(statement)
         for statement in (
             "ALTER TABLE attendees ADD COLUMN robloxUserId INTEGER",
             "ALTER TABLE attendees ADD COLUMN robloxUsername TEXT",
@@ -264,6 +293,7 @@ async def initDb():
             messageId INTEGER NOT NULL,
             submitterId INTEGER NOT NULL,
             recruitUserId INTEGER NOT NULL,
+            recruitDisplayName TEXT NOT NULL DEFAULT '',
             passedOrientation INTEGER NOT NULL DEFAULT 0,
             imageUrls TEXT NOT NULL,
             status TEXT NOT NULL,
@@ -275,6 +305,7 @@ async def initDb():
             threadId INTEGER
         );
         """)
+        await _executeOptional("ALTER TABLE recruitment_submissions ADD COLUMN recruitDisplayName TEXT NOT NULL DEFAULT ''")
         await db.execute("""
         CREATE TABLE IF NOT EXISTS recruitment_time_submissions (
             submissionId INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -325,13 +356,15 @@ async def initDb():
         await db.execute("""
         CREATE TABLE IF NOT EXISTS bg_flag_rules (
             ruleId INTEGER PRIMARY KEY AUTOINCREMENT,
-            ruleType TEXT NOT NULL, -- group/username/keyword/item/creator/badge
+            ruleType TEXT NOT NULL,
             ruleValue TEXT NOT NULL,
             note TEXT,
+            severity INTEGER NOT NULL DEFAULT 0,
             createdBy INTEGER,
             createdAt TEXT NOT NULL DEFAULT (datetime('now'))
         );
         """)
+        await _executeOptional("ALTER TABLE bg_flag_rules ADD COLUMN severity INTEGER NOT NULL DEFAULT 0")
         await db.execute("""
         CREATE TABLE IF NOT EXISTS orbat_requests (
             requestId INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -882,6 +915,40 @@ async def initDb():
         );
         """)
         await db.execute("""
+        CREATE TABLE IF NOT EXISTS reaction_role_entries (
+            entryId INTEGER PRIMARY KEY AUTOINCREMENT,
+            guildId INTEGER NOT NULL,
+            channelId INTEGER NOT NULL,
+            messageId INTEGER NOT NULL,
+            emojiKey TEXT NOT NULL,
+            roleId INTEGER NOT NULL,
+            createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(messageId, emojiKey)
+        );
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS button_role_entries (
+            entryId INTEGER PRIMARY KEY AUTOINCREMENT,
+            guildId INTEGER NOT NULL,
+            channelId INTEGER NOT NULL,
+            messageId INTEGER NOT NULL,
+            roleId INTEGER NOT NULL,
+            buttonLabel TEXT NOT NULL DEFAULT '',
+            emojiSpec TEXT NOT NULL DEFAULT '',
+            orderIndex INTEGER NOT NULL DEFAULT 0,
+            createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(messageId, roleId)
+        );
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS blocked_self_roles (
+            guildId INTEGER NOT NULL,
+            roleId INTEGER NOT NULL,
+            createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (guildId, roleId)
+        );
+        """)
+        await db.execute("""
         CREATE TABLE IF NOT EXISTS retry_jobs (
             jobId INTEGER PRIMARY KEY AUTOINCREMENT,
             jobType TEXT NOT NULL,
@@ -911,6 +978,8 @@ async def initDb():
             "CREATE INDEX IF NOT EXISTS idx_attendees_session_bg ON attendees(sessionId, bgStatus)",
             "CREATE INDEX IF NOT EXISTS idx_bg_review_actions_reviewer_decision ON bg_review_actions(reviewerId, decision, createdAt)",
             "CREATE INDEX IF NOT EXISTS idx_bg_review_actions_session_attendee ON bg_review_actions(sessionId, attendeeUserId, createdAt)",
+            "CREATE INDEX IF NOT EXISTS idx_bg_intel_reports_target_created ON bg_intelligence_reports(targetUserId, createdAt)",
+            "CREATE INDEX IF NOT EXISTS idx_bg_intel_reports_guild_created ON bg_intelligence_reports(guildId, createdAt)",
             "CREATE INDEX IF NOT EXISTS idx_points_pending_processed_user ON points_pending(processedAt, userId)",
             "CREATE INDEX IF NOT EXISTS idx_cohost_requests_status ON cohost_requests(status)",
             "CREATE INDEX IF NOT EXISTS idx_cohost_volunteers_message_join ON cohost_volunteers(messageId, joinTime)",
@@ -980,6 +1049,11 @@ async def initDb():
             "CREATE INDEX IF NOT EXISTS idx_workflow_runs_subject ON workflow_runs(subjectType, subjectId)",
             "CREATE INDEX IF NOT EXISTS idx_workflow_events_run_created ON workflow_events(runId, createdAt)",
             "CREATE INDEX IF NOT EXISTS idx_workflow_events_subject_created ON workflow_events(subjectType, subjectId, createdAt)",
+            "CREATE INDEX IF NOT EXISTS idx_reaction_roles_message ON reaction_role_entries(messageId)",
+            "CREATE INDEX IF NOT EXISTS idx_reaction_roles_guild_channel ON reaction_role_entries(guildId, channelId)",
+            "CREATE INDEX IF NOT EXISTS idx_button_roles_message ON button_role_entries(messageId, orderIndex)",
+            "CREATE INDEX IF NOT EXISTS idx_button_roles_guild_channel ON button_role_entries(guildId, channelId)",
+            "CREATE INDEX IF NOT EXISTS idx_blocked_self_roles_guild ON blocked_self_roles(guildId)",
             "CREATE INDEX IF NOT EXISTS idx_retry_jobs_status_next ON retry_jobs(status, nextAttemptAt)",
             "CREATE INDEX IF NOT EXISTS idx_retry_jobs_type_status ON retry_jobs(jobType, status, updatedAt)",
         )

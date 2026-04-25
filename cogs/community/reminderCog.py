@@ -40,8 +40,6 @@ def _formatIntervalText(totalSeconds: int) -> str:
     return f"every {seconds} second{'s' if seconds != 1 else ''}"
 
 class ReminderCog(commands.Cog):
-    reminderGroup = app_commands.Group(name="reminder", description="Reminder and timer tools.")
-
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self._reminderTask: asyncio.Task | None = None
@@ -153,6 +151,28 @@ class ReminderCog(commands.Cog):
         else:
             await markReminderSent(reminderId, dmDelivered=dmDelivered)
 
+    async def _processReminder(self, row: dict, *, now: datetime) -> None:
+        reminderId = int(row.get("reminderId") or 0)
+        embed = self._buildReminderEmbed(row)
+        guildId = int(row.get("guildId") or 0)
+        if guildId > 0:
+            guild = self.bot.get_guild(guildId)
+            if guild is not None:
+                embed.add_field(name="Server", value=guild.name, inline=False)
+
+        dmDelivered = False
+        targetType = str(row.get("targetType") or "USER").strip().upper()
+        if targetType == "ROLE":
+            await self._deliverRoleReminder(row, embed)
+        else:
+            dmDelivered = await self._deliverUserReminder(row, embed)
+
+        nextTime = self._nextRecurringTime(row, now=now)
+        if nextTime is not None:
+            await rescheduleReminder(reminderId, remindAtUtcIso=nextTime.isoformat())
+            return
+        await markReminderSent(reminderId, dmDelivered=dmDelivered)
+
     async def _runReminderLoop(self) -> None:
         await self.bot.wait_until_ready()
         while not self.bot.is_closed():
@@ -211,7 +231,6 @@ class ReminderCog(commands.Cog):
         )
         await self._safeEphemeral(interaction, f"Team reminder #{reminderId} set for {discord.utils.format_dt(remindAtUtc, 'F')} ({label}) for {' '.join(f'<@&{r}>' for r in roleIds)}.{' Repeats ' + _formatIntervalText(repeatSeconds) + '.' if repeatSeconds > 0 else ''}")
 
-    @reminderGroup.command(name="list", description="List your active reminders.")
     async def listReminders(self, interaction: discord.Interaction) -> None:
         if not interaction.guild: return await self._safeEphemeral(interaction, "This command can only be used in a server.")
         rows = await listActiveRemindersForUser(int(interaction.guild.id), int(interaction.user.id))
@@ -228,8 +247,6 @@ class ReminderCog(commands.Cog):
             lines.append(f"`#{int(row.get('reminderId') or 0)}` {discord.utils.format_dt(remindAt, 'R') if remindAt else str(row.get('remindAtUtc')).strip()} - {str(row.get('reminderText') or '').strip()}{f' ({chr(124).join(suffixParts)})' if suffixParts else ''}")
         await interactionRuntime.safeInteractionReply(interaction, embed=discord.Embed(title="Your Active Reminders", description="\n".join(lines), color=discord.Color.orange()), ephemeral=True, allowedMentions=discord.AllowedMentions(users=False, roles=False, everyone=False))
 
-    @reminderGroup.command(name="cancel", description="Cancel one of your reminders.")
-    @app_commands.rename(reminder_id="reminder-id")
     async def cancelReminderCommand(self, interaction: discord.Interaction, reminder_id: int) -> None:
         reminder = await getReminder(int(reminder_id))
         if reminder is None: return await self._safeEphemeral(interaction, "Reminder not found.")

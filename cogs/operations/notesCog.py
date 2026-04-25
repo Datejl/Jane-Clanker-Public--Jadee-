@@ -6,7 +6,6 @@ from discord.ext import commands
 
 from features.operations.notes import service as notesService
 from runtime import cogGuards as runtimeCogGuards
-from runtime import commandScopes as runtimeCommandScopes
 
 
 def _normalizeSubjectKey(subjectType: str, subject: str) -> str:
@@ -20,17 +19,6 @@ def _normalizeSubjectKey(subjectType: str, subject: str) -> str:
 
 class NotesCog(runtimeCogGuards.InteractionGuardMixin, commands.Cog):
 
-    @app_commands.command(name="notes-add", description="Add an internal assistant note.")
-    @app_commands.guilds(*runtimeCommandScopes.getTestGuildObjects())
-    @app_commands.describe(subject_type="What kind of thing this note is about.", subject="User ID, division key, or process label.", content="Internal note text.")
-    @app_commands.rename(subject_type="subject-type")
-    @app_commands.choices(
-        subject_type=[
-            app_commands.Choice(name="User", value="USER"),
-            app_commands.Choice(name="Division", value="DIVISION"),
-            app_commands.Choice(name="Process", value="PROCESS"),
-        ]
-    )
     async def notesAdd(
         self,
         interaction: discord.Interaction,
@@ -55,17 +43,6 @@ class NotesCog(runtimeCogGuards.InteractionGuardMixin, commands.Cog):
         )
         await self._safeReply(interaction, f"Saved note `{noteId}` for `{subject_type.value}:{subjectKey}`.")
 
-    @app_commands.command(name="notes-list", description="List internal assistant notes.")
-    @app_commands.guilds(*runtimeCommandScopes.getTestGuildObjects())
-    @app_commands.describe(subject_type="What kind of thing the notes are about.", subject="User ID, division key, or process label.")
-    @app_commands.rename(subject_type="subject-type")
-    @app_commands.choices(
-        subject_type=[
-            app_commands.Choice(name="User", value="USER"),
-            app_commands.Choice(name="Division", value="DIVISION"),
-            app_commands.Choice(name="Process", value="PROCESS"),
-        ]
-    )
     async def notesList(
         self,
         interaction: discord.Interaction,
@@ -94,9 +71,6 @@ class NotesCog(runtimeCogGuards.InteractionGuardMixin, commands.Cog):
             )
         await self._safeReply(interaction, "\n\n".join(lines[:10]))
 
-    @app_commands.command(name="notes-delete", description="Delete an internal assistant note.")
-    @app_commands.guilds(*runtimeCommandScopes.getTestGuildObjects())
-    @app_commands.rename(note_id="note-id")
     async def notesDelete(self, interaction: discord.Interaction, note_id: int) -> None:
         member = await self._requireAdminOrManageGuild(interaction)
         if member is None:

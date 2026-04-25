@@ -1,0 +1,2 @@
+"""Standalone background intelligence helpers."""
+

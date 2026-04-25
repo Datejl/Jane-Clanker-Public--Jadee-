@@ -5,24 +5,22 @@ from functools import lru_cache
 import discord
 
 import config
+from runtime import normalization
 
 
 def toPositiveInt(value: object) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return 0
-    return parsed if parsed > 0 else 0
+    return normalization.toPositiveInt(value)
 
 
 def normalizeRoleIds(raw: object) -> list[int]:
-    values = raw if isinstance(raw, (list, tuple, set)) else [raw]
-    out: list[int] = []
-    for value in values:
-        parsed = toPositiveInt(value)
-        if parsed > 0 and parsed not in out:
-            out.append(parsed)
-    return out
+    return normalization.normalizeIntList(raw)
+
+
+def hasAnyRole(member: discord.Member, roleIds: object) -> bool:
+    allowedRoleIds = normalization.normalizeIntSet(roleIds)
+    if not allowedRoleIds:
+        return False
+    return any(int(role.id) in allowedRoleIds for role in member.roles)
 
 
 def formatRoleIds(roleIds: list[int]) -> str:
@@ -48,7 +46,7 @@ def hasCohostPermission(member: discord.Member) -> bool:
     allowedRoles = getCohostAllowedRoleIds()
     if not allowedRoles:
         return True
-    return any(int(role.id) in allowedRoles for role in member.roles)
+    return hasAnyRole(member, allowedRoles)
 
 
 @lru_cache(maxsize=1)
@@ -68,7 +66,7 @@ def hasMiddleHighRankRole(member: discord.Member) -> bool:
     allowedRoles = getMiddleHighRankRoleIds()
     if not allowedRoles:
         return False
-    return any(int(role.id) in allowedRoles for role in member.roles)
+    return hasAnyRole(member, allowedRoles)
 
 
 def getBgCheckCertifiedRoleIds() -> set[int]:
@@ -88,7 +86,7 @@ def hasBgCheckCertifiedRole(member: discord.Member) -> bool:
     roleIds = getBgCheckCertifiedRoleIds()
     if not roleIds:
         return False
-    return any(int(role.id) in roleIds for role in member.roles)
+    return hasAnyRole(member, roleIds)
 
 
 def hasAdminOrManageGuild(member: discord.Member) -> bool:

@@ -35,7 +35,7 @@ class BgQueueProgressReporter:
             statusText = "In Progress"
 
         embed = discord.Embed(
-            title="Background Check Queue Creation",
+            title="Background Check Spreadsheet Creation",
             description=str(detail or "Working...").strip(),
             color=color,
             timestamp=datetime.now(timezone.utc),
