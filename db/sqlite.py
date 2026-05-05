@@ -392,11 +392,18 @@ async def initDb():
         """)
         await db.execute("""
         CREATE TABLE IF NOT EXISTS hg_point_awards (
-            awardedId INTEGER NOT NULL, -- guardsman that the points are awarded to
-            submitterId INTEGER NOT NULL, -- officer/guardsman/person that recommended the award
-            approverId INTEGER, -- officer who approved the award, can be none if it wasnt rejected/approved
-            points INTEGER NOT NULL DEFAULT 0,
-            timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+            guildId INTEGER NOT NULL,
+            channelId INTEGER NOT NULL,
+            messageId INTEGER,
+            submitterId INTEGER NOT NULL,
+            awardedUserId INTEGER NOT NULL,
+            reason TEXT NOT NULL,
+            eventPoints INTEGER NOT NULL DEFAULT 0,
+            quotaPoints INTEGER NOT NULL DEFAULT 0,
+            reviewerId INTEGER,
+            reviewNote TEXT,
+            reviewThreadId INTEGER,
+         -- timestamp TEXT NOT NULL DEFAULT (datetime('now')),
             status TEXT NOT NULL, -- PENDING / APPROVED / REJECTED
         );
         """)
@@ -411,13 +418,21 @@ async def initDb():
         );
         """)
         await db.execute("""
-        CREATE TABLE IF NOT EXISTS hg_solo_sentry_logs (
-            userId INTEGER NOT NULL,
+        CREATE TABLE IF NOT EXISTS hg_sentry_logs (
+            guildId INTEGER NOT NULL,
+            channelId INTEGER NOT NULL,
+            messageId INTEGER,
+            submitterId INTEGER NOT NULL,
             startTime TEXT NOT NULL,
             endTime TEXT NOT NULL,
+            eventPoints INTEGER NOT NULL DEFAULT 0,
             evidenceAttachmentUrl1 TEXT,
             evidenceAttachmentUrl2 TEXT,
+            reviewerId INTEGER,
+            reviewNote TEXT,
+            reviewThreadId INTEGER,
             status TEXT NOT NULL DEFAULT 'PENDING', -- PENDING/APPROVED/REJECTED
+
         );
         """)
         await db.execute("""
@@ -1072,9 +1087,9 @@ async def initDb():
             "CREATE INDEX IF NOT EXISTS idx_recruitment_patrol_attendees_patrol ON recruitment_patrol_attendees(patrolId, joinTime)",
             "CREATE INDEX IF NOT EXISTS idx_hg_main ON hg_main(userId)",
             "CREATE INDEX IF NOT EXISTS idx_hg_events ON hg_events(eventId)",
-            "CREATE INDEX IF NOT EXISTS idx_hg_point_awards ON hg_point_awards(timestamp)",
+         #  "CREATE INDEX IF NOT EXISTS idx_hg_point_awards ON hg_point_awards(id)",
             "CREATE INDEX IF NOT EXISTS idx_hg_attendance_records ON hg_attendance_records(eventId, userId)",
-            "CREATE INDEX IF NOT EXISTS idx_hg_solo_sentry_logs ON hg_solo_sentry_logs(userId)",
+            "CREATE INDEX IF NOT EXISTS idx_hg_sentry_logs ON hg_sentry_logs(userId)",
             "CREATE INDEX IF NOT EXISTS idx_hg_quota_cycles ON hg_quota_cycles(cycleId)",
             "CREATE INDEX IF NOT EXISTS idx_orbat_requests_status ON orbat_requests(status)",
             "CREATE INDEX IF NOT EXISTS idx_loa_requests_status ON loa_requests(status)",
