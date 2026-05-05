@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from dataclasses import dataclass
 from typing import Any
 from db.sqlite import execute, executeReturnId
@@ -200,11 +202,106 @@ async def updateSoloSentryStatus(
 #              EVENT LOGS              #
 ########################################
 
-async def createEvent(messageId: int, name: str, type: str, time: str, hostId: int, cohostsString: int, supervisorsString: int):
-    eventId = await executeReturnId("""
-        INSERT INTO hg_event(messageId, name, type, time, hostId, cohostsString, supervisorsString)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """,
-    (messageId, name, type, time, hostId, cohostsString, supervisorsString)
+async def stringToList(inputString: str) -> list[str]:
+    return [item.strip() for item in inputString.split(",") if item.strip()]
+
+async def listToString(inputList: list[str]) -> str:
+    return ",".join(inputList)
+
+async def scheduleEvent(
+    guildId: int,
+    channelId: int,
+    announcementMessageId: int,
+    name: str,
+    description: str,
+    type: str,
+    time: str,
+    hostId: int,
+    cohostsString: str,
+    supervisorsString: str,
+) -> int:
+    eventId = await executeReturnId(
+        """
+        INSERT INTO hg_event(guildId, channelId, announcementMessageId, name, description, type, time, hostId, cohostsString, supervisorsString, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SCHEDULED')
+        """,
+    (guildId, channelId, announcementMessageId, name, description, type, time, hostId, cohostsString, supervisorsString),
     )
     return eventId
+
+async def getEventId(eventId: int) -> dict | None:
+    return await fetchOne(
+        """
+        SELECT * FROM hg_event WHERE eventId = ?
+        """,
+        (eventId,),
+    )
+
+async def setAnnouncementMessageId(eventId: int, announcementMessageId: int) -> None:
+    await execute(
+        """
+        UPDATE hg_event SET announcementMessageId = ? WHERE eventId = ?
+        """,
+        (announcementMessageId, eventId),
+    )
+
+async def updateEventStatus(
+    eventId: int,
+    status: str,
+) -> None:
+    await execute(
+        """
+        UPDATE hg_event
+        SET status = ?
+        WHERE eventId = ?
+        """,
+        (status, eventId),
+    )
+
+#########################################
+#           EVENT ACTIVATION            #
+#########################################
+
+async def activateEvent(eventId: int, clockInMessageId: int) -> None:
+    await execute(
+        """
+        UPDATE hg_event
+        SET status = 'ACTIVE', clockInMessageId = ?, startTime = strftime('%s', 'now')
+        WHERE eventId = ?
+        """,
+        (clockInMessageId, eventId),
+    )
+
+async def setClockInMessageId(eventId: int, clockInMessageId: int) -> None:
+    await execute(
+        """
+        UPDATE hg_events SET clockInMessageId = ? WHERE eventId = ?
+        """,
+        (clockInMessageId, eventId),
+    )
+
+########################################
+#          EVENT ARCHIVATION           #
+########################################
+
+async def archiveEvent(eventId: int) -> None:
+    kwargs = await fetchOne(
+        """        
+        SELECT * FROM hg_events WHERE eventId = ?
+        """,
+        (eventId,),
+    )
+    await execute(
+        """
+        DELETE FROM hg_events WHERE eventId = ?
+        """,
+        (eventId,),
+    )
+    durationMinutes = round((kwargs['startTime'] - time.time()) / 60)
+    await execute(
+        """
+        INSERT INTO hg_event_archive (eventId, name, description, type, time, hostId, cohostsString, supervisorsString, durationMinutes, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ARCHIVED')
+        """,
+        (kwargs['eventId'], kwargs['name'], kwargs['description'], kwargs['type'], kwargs['time'], kwargs['hostId'], kwargs['cohostsString'], kwargs['supervisorsString'], durationMinutes),
+    )
