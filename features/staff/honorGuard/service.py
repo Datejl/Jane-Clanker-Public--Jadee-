@@ -131,35 +131,76 @@ async def updatePointAwardStatus(
         """,
         (status, reviewerId, note, threadId, submissionId),
     )
-def submitPoints(awardedId: int, submitterId: int, approverId: int, points: int):
-    await execute("""
-        INSERT INTO hg_point_awards(awardedId, submitterId, approverId, points, timestamp, status)
-        VALUES (?, ?, ?, ?, datetime('now'), 'PENDING')
+########################################
+#           SOLO SENTRY LOGS           #
+########################################
+
+async def soloSentryRequest(
+        guildId: int,
+        channelId: int,
+        messageId: int,
+        submitterId: int,
+        startTime: int,
+        endTime: int,
+        evidenceAttachmentUrl1: str | None = None,
+        evidenceAttachmentUrl2: str | None = None,
+) -> int:
+    return await executeReturnId(
+        """
+        INSERT INTO hg_sentry_logs
+            (guildId, channelId, messageId, submitterId, startTime, endTime, evidenceAttachmentUrl1, evidenceAttachmentUrl2, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
         """,
-        (awardedId, submitterId, approverId, points)
+        (
+            guildId,
+            channelId,
+            messageId,
+            submitterId,
+            startTime,
+            endTime,
+            evidenceAttachmentUrl1,
+            evidenceAttachmentUrl2,
+        ),
     )
 
-def approvePoints(timestamp: str, approverId: int):
-    await execute("""
-        UPDATE hg_point_awards
-        SET status = 'APPROVED',
-            approverId = ?
-        WHERE timestamp = ?
-    """, 
-    (approverId, timestamp)
+async def getSoloSentrySubmission(requestId: int) -> dict | None:
+    return await fetchOne(
+        """
+        SELECT * FROM hg_sentry_logs WHERE id = ?
+        """,
+        (requestId,),
     )
 
-def rejectPoints(timestamp: str, approverId: int):
-    await execute("""
-        UPDATE hg_point_awards
-        SET status = 'REJECTED',
-            approverId = ?
-        WHERE timestamp = ?
-    """,
-    (approverId, timestamp)
+async def setSoloSentryMessageId(requestId: int, messageId: int) -> None:
+    await execute(
+        """
+        UPDATE hg_sentry_logs SET messageId = ? WHERE id = ?
+        """,
+        (messageId, requestId),
     )
 
-def createEvent(messageId: int, name: str, type: str, time: str, hostId: int, cohostsString: int, supervisorsString: int):
+async def updateSoloSentryStatus(
+    requestId: int,
+    status: str,
+    reviewerId: int,
+    points: int,
+    note: str | None = None,
+    threadId: int | None = None,
+) -> None:
+    await execute(
+        """
+        UPDATE hg_sentry_logs
+        SET status = ?, reviewerId = ?, eventPoints = ?, reviewNote = ?, reviewThreadId = ?
+        WHERE id = ?
+        """,
+        (status, reviewerId, points, note, threadId, requestId),
+    )
+
+########################################
+#              EVENT LOGS              #
+########################################
+
+async def createEvent(messageId: int, name: str, type: str, time: str, hostId: int, cohostsString: int, supervisorsString: int):
     eventId = await executeReturnId("""
         INSERT INTO hg_event(messageId, name, type, time, hostId, cohostsString, supervisorsString)
         VALUES (?, ?, ?, ?, ?, ?, ?)
