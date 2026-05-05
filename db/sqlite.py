@@ -369,19 +369,27 @@ async def initDb():
         await db.execute("""
         CREATE TABLE IF NOT EXISTS hg_events (
             eventId INTEGER AUTOINCREMENT,
-            messageId INTEGER NOT NULL,
+            guildId INTEGER NOT NULL,
+            channelId INTEGER NOT NULL,
+            announcementMessageId INTEGER,
+            clockInMessageId INTEGER,
             name TEXT NOT NULL,
+            description TEXT,
             type TEXT NOT NULL, -- TRAINING / EXAM_JGE / EXAM_NCO / GAMENIGHT / SENTRY_DUTY / INSPECTION / ORIENTATION
-            time TEXT NOT NULL,
+            time TEXT NOT NULL, -- planned start time
+            startTime TEXT, -- real start time
+            endTime TEXT,
             hostId INTEGER NOT NULL,
             cohostsString TEXT,
             supervisorsString TEXT,
+            status TEXT NOT NULL,
         );
         """)
         await db.execute("""
         CREATE TABLE IF NOT EXISTS hg_events_archive (
             eventId INTEGER NOT NULL,
             name TEXT NOT NULL,
+            description TEXT,
             type TEXT NOT NULL, -- TRAINING / EXAM_JGE / EXAM_NCO / GAMENIGHT / SENTRY_DUTY / INSPECTION / ORIENTATION
             time TEXT NOT NULL,
             hostId INTEGER NOT NULL,
