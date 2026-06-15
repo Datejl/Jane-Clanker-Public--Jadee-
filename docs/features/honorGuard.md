@@ -1,33 +1,116 @@
 # Honor Guard
 
-This is the current intended model for Jane's Honor Guard flow.
+This doc is a coordination note for Jane's Honor Guard work.
 
-It is based on:
+It should not be read as a ranking of anyone's branch or a decision that one person's implementation should replace another person's work. The active `feat-honorguard` branches from jojoa and Datejl are the current workflow exploration. The private repo and public `main` branch are integration targets, and they may lag behind or contain partial manual merges.
 
-- the current private-repo Honor Guard backend
-- the imported public-branch scaffolding
-- the follow-up transcript explaining how HG actually wants the system to work
+The goal is to keep everyone coding toward the same HG flow without silently discarding useful branch work.
 
-This is not a finished implementation doc. It is the working contract we should code against so future changes have one shared reference point.
+## Active Branches
 
-## Current Public-Branch Sync Rule
+- `jojoa/Jane-Clanker-Public`, branch `feat-honorguard`
+  - event create flow
+  - solo sentry and point award work
+  - early event manage and finish direction
+- `Datejl/Jane-Clanker-Public--Jadee-`, branch `feat-honorguard`
+  - based on jojoa's branch
+  - newer attendee edit dropdown work
+  - early finish UI work for event point editing
+- `aVeryTiredPotato/Jane-Clanker-Public`, branch `main`
+  - public sync target
+  - not guaranteed to contain the newest HG workflow
+- private Jane repo
+  - production integration target
+  - keeps private config, credentials, and deployment details out of public
 
-The public `Honor-Guard` branch is useful. It is a more recent branch of HG work, and parts of it were manually merged into this repo earlier. Because that merge was selective, the branch and the local private repo are now two related but diverged versions of the same feature.
+When these disagree, assume the active feature branches may contain newer HG workflow decisions. Check them before changing the public or private version of HG.
 
-Use it as history for:
+## Current Workflow Goal
 
-- the `/honorguard-award-points` shape
-- the review buttons for point awards
-- the general idea that HG work should be public-safe when possible
+The current HG direction is:
 
-When bringing public-branch work back into the private repo, port it selectively and think about these areas with the current backend:
+1. Create an event.
+2. Let people clock in.
+3. Let the host or allowed supervisors manage the event while it is active.
+4. Finish the event.
+5. Review and edit each person's quota points and event points before final submission.
+6. Submit the result for review.
+7. Bulk sync approved results to the sheet.
 
-- the `hg_main` member-state table draft
-- the branch's point-award table fields
-- exported config differences from the public branch
-- placeholder commands that may not include later private-repo behavior
+This is the main point that should guide future work. HG does not want every normal event attendee to become a separate manual log. Normal hosted events should create attendance records through the event flow.
 
-The local private repo should keep the current submission-based model unless we intentionally migrate it. It should also preserve branch-facing command language where that helps staff muscle memory. For example, manual point awards still expose `event-points` in the command while the service maps that into the current awarded-point accounting rows.
+## Event Manage Flow
+
+The manage flow should let an allowed manager select attendees and then take clear actions.
+
+Expected actions:
+
+- remove an attendee
+- change an attendee to co-host
+- change an attendee to supervisor
+- change a co-host or supervisor back to a normal attendee
+
+The active branch work is already moving toward a dropdown/select based UI for this. That direction is worth preserving unless HG explicitly asks for a different interaction model.
+
+Open permission detail:
+
+- hosts can manage their own event
+- supervisors should be able to manage if HG wants that operationally
+- admins or HG command roles can manage as an override
+
+## Finish Flow
+
+The finish flow should not immediately write final points.
+
+Expected behavior:
+
+- Jane calculates the default quota points and event points from the event type, role, duration, and attendance.
+- The finish view shows the calculated result.
+- Staff can edit per-person quota points and event points before submitting.
+- The submitted result goes through review before sheet sync.
+
+This matters for late joins, early leaves, extra credit, and manual corrections.
+
+## Exam Flow
+
+Exams probably need a separate finish path.
+
+The current idea is to treat exam grading more like Orientation grading:
+
+- attendees may have pass/fail or grading outcomes
+- hosts, co-hosts, and supervisors may earn points based on graded attendee counts
+- NCO exam screen-assist points need to be handled cleanly
+
+Do not force exams through the exact same finish UI as a normal training if that makes the grading awkward.
+
+## Sheet Sync
+
+The sheet should remain the live HG member tracker unless HG intentionally decides to move member state into Jane's database later.
+
+Jane's database should store:
+
+- event workflow state
+- submission and review state
+- attendance results
+- sentry logs
+- manual point awards
+- sync/audit history
+
+The sheet adapter should move toward bulk updates, similar to recruitment. Updating the sheet once per person is slower, noisier, and more likely to hit API pain during larger events.
+
+## Public And Private Repo Rule
+
+Public-safe HG work should stay public when possible.
+
+When bringing HG work between the active branches, public `main`, and private Jane:
+
+- compare the active feature branch behavior first
+- preserve the staff-facing workflow when it reflects the current HG plan
+- adapt internals for private config, secrets, deployment, and shared services
+- do not overwrite jojoa or Datejl's current workflow direction without checking the branch and asking if needed
+- if schemas disagree, write a small migration or adapter plan instead of silently choosing one
+
+Private repo constraints still matter. Secrets, private channel IDs, credentials, and private-only modules should not leak into public.
 
 ## Where It Lives
 
@@ -37,10 +120,11 @@ The local private repo should keep the current submission-based model unless we 
 - `features/staff/honorGuard/sheets.py`
 - `features/staff/honorGuard/outputs.py`
 - `features/staff/honorGuard/rendering.py`
+- `features/staff/clockins/honorGuardAdapter.py`
 - `db/sqlite.py`
 - `config.py`
 
-## Core Idea
+## Core Point Model
 
 Honor Guard has:
 
@@ -52,7 +136,7 @@ Promotion points are tracked as:
 - `event points`
 - `awarded points`
 
-The system also cares about three groups:
+The system also cares about three broad groups:
 
 - `enlisted`
   `Jr Guardsman`, `Guardsman`
@@ -63,53 +147,18 @@ The system also cares about three groups:
 
 The important behavior split is:
 
-- enlisteds get normal event credit by attending
+- enlisted members get normal event credit by attending
 - officers do not get points for just attending
-- officers get points by hosting, co-hosting, or supervising
+- officers get points by hosting, co-hosting, supervising, grading, or other officer-specific work
 - NCOs can earn points both ways
 
-## Source Of Truth
+## Logging Paths
 
-For the current private-repo design, Jane should treat the Honor Guard workbook as the live member-state source of truth.
-
-That means:
-
-- the member sheet is the current HG ORBAT-like member state
-- the schedule sheet is the live upcoming-event list
-- the archive sheet is the finished-event history
-- the event-host sheet tracks hosted-event counts and type totals
-
-The database should store logs, approvals, and workflow state.
-
-The database is not just a testing layer. It is the durable internal record Jane should work from so she can batch or defer Google Sheets writes instead of depending on the Sheets API for every state change.
-
-The database should not become a second competing copy of the full member ORBAT unless we explicitly decide to do that later.
-
-This is one of the main places where the public branch and private repo ended up with different assumptions. The branch experimented with an `hg_main` style DB copy. The current private repo should not assume that model unless we decide to migrate toward it on purpose.
-
-## Non-Goals For Phase 1
-
-Do not try to replace Apollo immediately.
-
-The intended order is:
-
-- make logging work first
-- add archive/schedule cleanup second
-- only consider full scheduling / announcements later if HG still wants it
-
-Jane's core value here is logging and workflow state, not replacing an existing event scheduler just because one already exists.
-
-## Intended Logging Model
-
-The system should split into three main paths:
-
-1. `solo sentry`
-2. `event clock-in / attendance`
-3. `manual point awards`
+HG currently has three main paths.
 
 ### Solo Sentry
 
-Solo sentry is the only thing that should be individually logged by the member.
+Solo sentry is individually logged by the member.
 
 Expected behavior:
 
@@ -120,7 +169,7 @@ Expected behavior:
 - earns 1 quota point
 - earns 1 promotion event point
 
-Do not fully automate acceptance for solo sentry. HG explicitly wants fraud resistance here.
+Do not fully automate acceptance for solo sentry. HG wants review here for fraud resistance.
 
 ### Event Clock-In
 
@@ -133,13 +182,12 @@ That means:
 - event attendance records are generated from that flow
 - staff should not have to submit individual manual logs for normal hosted events
 
-This was one of the biggest clarifications from the transcript: normal HG activities should not be per-user manual submissions.
-
-The clock-in flow also needs to support Honor Guard-specific adjustments that existing recruitment flows do not fully cover yet:
+The clock-in flow needs HG-specific handling for:
 
 - host, co-host, and supervisor attribution
 - event-type-specific point rules
-- late-join / early-leave point adjustments when HG wants reduced credit
+- late-join and early-leave point adjustments
+- per-person edits before final review
 
 ### Manual Point Awards
 
@@ -155,7 +203,7 @@ These should go through an approval flow and then sync into the member sheet as 
 
 ## Point Rules
 
-These are the working rules we should implement unless HG changes them again.
+These are the working rules unless HG changes them again.
 
 ### Enlisted Attendance
 
@@ -163,7 +211,7 @@ These are the working rules we should implement unless HG changes them again.
 - exception: `gamenight` gives `0.5` quota points
 - promotion event points come from attendance-based event logic
 
-### Officer Hosting / Supervising / Cohosting
+### Officer Hosting, Supervising, And Co-Hosting
 
 Officers should not receive points for just attending.
 
@@ -195,9 +243,9 @@ NCOs are the mixed case.
 They can:
 
 - receive attendance-style quota credit
-- receive hosting/supervising/cohosting promotion credit
+- receive hosting, supervising, or co-hosting promotion credit
 
-## Promotion / Status Rules
+## Promotion And Status Rules
 
 ### Guardsman
 
@@ -226,15 +274,11 @@ Status logic:
 - `< 4` quota points at reset and no excuse status: `Inactive`
 - `8` quota points before reset: may be marked `Active` early
 
-Do not automate kicks just because someone has `0` quota points.
+Do not automate kicks just because someone has `0` quota points. Leave that as a manual staff action unless HG intentionally asks Jane to own it later.
 
-HG mentioned that as a policy outcome, but it is safer to leave that as manual staff action unless we intentionally automate it later.
+## Database Meanings
 
-## Intended Database Meanings
-
-The current private-repo table layout is close to the right shape if we use it consistently.
-
-This should also stay compatible with the broader direction Potato described: generic division logging groundwork first, then Honor Guard-specific rules layered on top.
+These are the intended meanings for the current private-repo tables. If the active branch schema differs, reconcile the behavior before replacing either side.
 
 ### `hg_submissions`
 
@@ -244,7 +288,8 @@ Examples:
 
 - manual point awards
 - solo sentry submissions
-- possibly other future manual exceptions
+- event records awaiting review
+- future manual exceptions
 
 ### `hg_submission_events`
 
@@ -263,11 +308,11 @@ This is not the same thing as hosted event attendance.
 
 Approved manual awarded-point records.
 
-These are the durable accounting rows for awarded points, not the live review queue itself.
+These are durable accounting rows for awarded points, not the live review queue itself.
 
 ### `hg_attendance_records`
 
-Per-user attendance results from approved event clock-ins.
+Per-user attendance results from event clock-ins.
 
 These should be generated from event flows, not typed in one-by-one for normal hosted events.
 
@@ -292,7 +337,7 @@ This is the main event-level object for:
 
 ### `hg_quota_cycles`
 
-Cycle history / reset history.
+Cycle history and reset history.
 
 This is useful for:
 
@@ -304,54 +349,33 @@ It is not required to make clock-ins work in phase 1.
 
 ## Sheet Side Effects
 
-When a hosted event is finalized, Jane should:
+When a hosted event is approved and finalized, Jane should:
 
 1. sync the relevant member point deltas
 2. append the event to the archive sheet
 3. remove or mark the event from the schedule sheet
 4. increment the host's event-host stats
 
-That archive/schedule/host-stat trio is part of the real workflow, not an optional nice-to-have.
+That archive, schedule, and host-stat work is part of the real workflow.
 
-## Permissions
+## Current Priority
 
-Expected permission model:
+The most useful next implementation order is:
 
-- approvers are a dedicated Honor Guard reviewer / command role
-- most hosting/cohosting/supervising permissions can be derived from rank roles
-- special SGM hosting permission may need its own role if HG wants that granularity
-
-Do not build a complicated custom permission DB unless the Discord role model genuinely cannot cover the needed cases.
-
-## Phase 1 Priority
-
-The safest implementation order is:
-
-1. manual point-award approval flow
-2. solo-sentry approval flow
-3. event record + attendance clock-in flow
-4. sheet sync for approved records
-5. manual quota-cycle/reset tooling
-6. quota automation later
-
-More specifically, the project roadmap implied by the chat is:
-
-1. generic division logging groundwork / future-proofed DB shapes
-2. Honor Guard config placeholders and sheet-adapter skeleton
-3. manual awarded-point logs first
-4. event attendance logs next
-5. officer host / co-host / supervisor handling
-6. solo-sentry daily lockout
-7. archive / schedule updates
-8. bi-weekly quota reset and status update tooling
-9. promotion-readiness reporting
-10. only after live testing, consider heavier automation like promo automation
+1. keep solo sentry and point award flows working
+2. finish event create and attendee clock-in
+3. finish event manage with attendee removal and role changes
+4. finish per-person point editing before review submission
+5. bulk sheet sync for approved results
+6. build the exam-specific finish flow
+7. add manual quota-cycle tooling
+8. consider quota automation later
 
 ## Practical Rule
 
-When branch code, transcript notes, and current private backend are not aligned:
+When branch code, docs, and private backend are not aligned:
 
-- prefer the real HG workflow described in the transcript
-- prefer the private repo's current table/service model unless we intentionally migrate it
-- do not introduce a second member-state source of truth unless we explicitly choose that on purpose
-- keep public-facing command names stable when existing branch users may have learned them
+- active HG feature branch workflow wins for staff-facing UX unless HG says otherwise
+- private repo constraints win for secrets, production safety, and shared deployment behavior
+- sheet state remains the live member tracker unless HG intentionally changes that
+- schema differences need reconciliation, not silent replacement
