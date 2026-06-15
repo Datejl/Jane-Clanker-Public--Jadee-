@@ -15,6 +15,7 @@ from runtime import permissions as runtimePermissions
 
 
 log = logging.getLogger(__name__)
+joinButtonEmoji = "\N{WHITE HEAVY CHECK MARK}"
 
 
 def _hasRole(member: discord.Member, roleId: Optional[int]) -> bool:
@@ -94,12 +95,16 @@ class HonorGuardPointAwardReviewView(discord.ui.View):
         self,
         *,
         reviewerId: int,
+        requestedBy: str,
+        requestMessageUrl: str,
         change: str,
         details: str,
     ) -> None:
         await honorGuardOutputs.sendHonorGuardSheetChangeLog(
             self.cog.bot,
             reviewerId=reviewerId,
+            requestedBy=requestedBy,
+            requestMessageUrl=requestMessageUrl,
             change=change,
             details=details,
         )
@@ -171,14 +176,15 @@ class HonorGuardPointAwardReviewView(discord.ui.View):
                         awardedPoints = submission.get("awardedPoints") or submission.get("promotionAwardedPoints") or 0
                         quotaPoints = submission.get("quotaPoints") or 0
                         syncStatusText = "already synced" if syncResult.get("alreadySynced") else "synced now"
+                        requestedBy = f"<@{int(submission.get('submitterId') or 0)}>"
+                        requestMessageUrl = str(getattr(interaction.message, "jump_url", "") or "")
                         await self._logHonorGuardSheetChange(
                             reviewerId=interaction.user.id,
-                            change="Edited Honor Guard points for an approved point award.",
+                            requestedBy=requestedBy,
+                            requestMessageUrl=requestMessageUrl,
+                            change="Edited Honor-Guard points for an approved point award.",
                             details=(
-                                f"User: <@{int(submission.get('awardedUserId') or 0)}> | "
-                                f"Points +{awardedPoints} AP, +{quotaPoints} QP | "
-                                f"Reason: {submission.get('reason') or 'N/A'} | "
-                                f"Sheet: {syncStatusText}"
+                                f"Target: <@{int(submission.get('awardedUserId') or 0)}> | AP: +{awardedPoints} | QP: +{quotaPoints} | Sheet: {syncStatusText}"
                             ),
                         )
 
@@ -277,12 +283,16 @@ class HonorGuardSentryReviewView(discord.ui.View):
         self,
         *,
         reviewerId: int,
+        requestedBy: str,
+        requestMessageUrl: str,
         change: str,
         details: str,
     ) -> None:
         await honorGuardOutputs.sendHonorGuardSheetChangeLog(
             self.cog.bot,
             reviewerId=reviewerId,
+            requestedBy=requestedBy,
+            requestMessageUrl=requestMessageUrl,
             change=change,
             details=details,
         )
@@ -352,15 +362,15 @@ class HonorGuardSentryReviewView(discord.ui.View):
                     submission = await self._getSubmission()
                     if submission:
                         syncStatusText = "already synced" if syncResult.get("alreadySynced") else "synced now"
+                        requestedBy = f"<@{int(submission.get('submitterId') or 0)}>"
+                        requestMessageUrl = str(getattr(interaction.message, "jump_url", "") or "")
                         await self._logHonorGuardSheetChange(
                             reviewerId=interaction.user.id,
-                            change="Edited Honor Guard points for an approved solo sentry log.",
+                            requestedBy=requestedBy,
+                            requestMessageUrl=requestMessageUrl,
+                            change="Edited Honor-Guard points for an approved solo sentry log.",
                             details=(
-                                f"User: <@{int(submission.get('targetUserId') or 0)}> | "
-                                f"Date: {submission.get('eventDate') or 'N/A'} | "
-                                f"Points +{submission.get('promotionEventPoints') or 0} EP, "
-                                f"+{submission.get('quotaPoints') or 0} QP | "
-                                f"Sheet: {syncStatusText}"
+                                f"Target: <@{int(submission.get('targetUserId') or 0)}> | Date: {submission.get('eventDate') or 'N/A'} | EP: +{submission.get('promotionEventPoints') or 0} | QP: +{submission.get('quotaPoints') or 0} | Sheet: {syncStatusText}"
                             ),
                         )
 
@@ -416,3 +426,65 @@ class HonorGuardSentryReviewView(discord.ui.View):
     )
     async def rejectBtn(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         await self._finishDecision(interaction, status="REJECTED", note=None)
+
+
+class HonorGuardEventManageModal(discord.ui.Modal, title="Manage Event Attendees"):
+    targetInput = discord.ui.TextInput(
+        label="Remove attendee (number, user ID, or mention)",
+        style=discord.TextStyle.short,
+        max_length=40,
+        required=True,
+        placeholder="Example: 2 or 123456789012345678",
+    )
+
+    def __init__(self, cog: "HonorGuardCog", sessionId: int):
+        super().__init__()
+        self.cog = cog
+        self.sessionId = int(sessionId)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        token = str(self.targetInput.value or "").strip()
+        await self.cog.handleHonorGuardEventManage(interaction, self.sessionId, token)
+
+
+class HonorGuardEventClockinView(discord.ui.View):
+    def __init__(self, cog: "HonorGuardCog", sessionId: int):
+        super().__init__(timeout=None)
+        self.cog = cog
+        self.sessionId = int(sessionId)
+
+    @discord.ui.button(
+        label="Delete",
+        style=discord.ButtonStyle.danger,
+        row=0,
+        custom_id="honor_guard_event:delete",
+    )
+    async def deleteBtn(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await self.cog.handleHonorGuardEventDelete(interaction, self.sessionId)
+
+    @discord.ui.button(
+        label="Manage",
+        style=discord.ButtonStyle.secondary,
+        row=0,
+        custom_id="honor_guard_event:manage",
+    )
+    async def manageBtn(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await self.cog.openHonorGuardEventManage(interaction, self.sessionId)
+
+    @discord.ui.button(
+        label="Finish",
+        style=discord.ButtonStyle.primary,
+        row=0,
+        custom_id="honor_guard_event:finish",
+    )
+    async def finishBtn(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await self.cog.handleHonorGuardEventFinish(interaction, self.sessionId)
+
+    @discord.ui.button(
+        style=discord.ButtonStyle.success,
+        emoji=joinButtonEmoji,
+        row=1,
+        custom_id="honor_guard_event:join",
+    )
+    async def joinBtn(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await self.cog.handleHonorGuardEventJoin(interaction, self.sessionId)

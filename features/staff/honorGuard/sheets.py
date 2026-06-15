@@ -162,13 +162,13 @@ def configurationProblems(*, configModule: Any = config) -> tuple[str, ...]:
     if not str(getattr(configModule, "honorGuardEventHostsSheetName", "") or "").strip():
         problems.append("honorGuardEventHostsSheetName is not set")
     if not _sheetAvailable(_memberSheetKey):
-        problems.append("Honor Guard member sheet is not registered")
+        problems.append("Honor-Guard member sheet is not registered")
     if not _sheetAvailable(_scheduleSheetKey):
-        problems.append("Honor Guard schedule sheet is not registered")
+        problems.append("Honor-Guard schedule sheet is not registered")
     if not _sheetAvailable(_archiveSheetKey):
-        problems.append("Honor Guard archive sheet is not registered")
+        problems.append("Honor-Guard archive sheet is not registered")
     if not _sheetAvailable(_eventHostsSheetKey):
-        problems.append("Honor Guard event hosts sheet is not registered")
+        problems.append("Honor-Guard event hosts sheet is not registered")
     return tuple(problems)
 
 
@@ -318,7 +318,7 @@ def applyMemberPointDeltas(
     member = readMember(discordId=discordId, robloxUsername=robloxUsername, configModule=configModule)
     if member is None:
         lookup = robloxUsername or str(discordId or "")
-        raise ValueError(f"Honor Guard member not found in sheet: {lookup}")
+        raise ValueError(f"Honor-Guard member not found in sheet: {lookup}")
 
     columns = loadMemberColumns(configModule=configModule)
     nextQuota = max(0.0, float(member.quotaPoints) + float(quotaDelta or 0))
@@ -593,14 +593,25 @@ def incrementEventHostStats(
     if row is None:
         return None
 
+    columnValues: dict[str, tuple[str, int]] = {}
     rangeA1 = f"{_sheetName(_eventHostsSheetKey)}!{column}{row}:{column}{row}"
     values = _engine.getValues(_eventHostsSheetKey, rangeA1)
     previousValue = _toInt(values[0][0] if values and values[0] else 0)
     nextValue = max(0, previousValue + int(delta or 0))
+    columnValues["eventHostStat"] = (column, nextValue)
+
+    totalColumn = _normalizeColumn(getattr(configModule, "honorGuardEventHostTotalEventsColumn", ""))
+    if totalColumn:
+        totalRangeA1 = f"{_sheetName(_eventHostsSheetKey)}!{totalColumn}{row}:{totalColumn}{row}"
+        totalValues = _engine.getValues(_eventHostsSheetKey, totalRangeA1)
+        previousTotalValue = _toInt(totalValues[0][0] if totalValues and totalValues[0] else 0)
+        nextTotalValue = max(0, previousTotalValue + int(delta or 0))
+        columnValues["totalEvents"] = (totalColumn, nextTotalValue)
+
     _engine.writeRowColumns(
         _eventHostsSheetKey,
         row=row,
-        columnValues={"eventHostStat": (column, nextValue)},
+        columnValues=columnValues,
     )
     return HonorGuardEventHostUpdate(
         row=row,

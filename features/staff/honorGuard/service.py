@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 import config
 from db.sqlite import execute, executeReturnId, fetchAll, fetchOne
+from features.staff.sessions import service as sessionService
 from features.staff.sessions.Roblox import roverIdentity
 
 
@@ -38,6 +39,9 @@ class HonorGuardScaffoldStatus:
     plannedModules: tuple[str, ...]
     nextMilestones: tuple[str, ...]
     sheetProblems: tuple[str, ...] = ()
+
+
+HONOR_GUARD_EVENT_SESSION_TYPE = "honor_guard_event"
 
 
 def _normalizePositiveInt(value: object) -> int:
@@ -312,6 +316,395 @@ def buildScaffoldStatus(*, configModule: Any) -> HonorGuardScaffoldStatus:
     )
 
 
+def _normalizeUserIdList(values: object) -> list[int]:
+    out: list[int] = []
+    for value in list(values or []):
+        try:
+            userId = int(value)
+        except (TypeError, ValueError):
+            continue
+        if userId <= 0 or userId in out:
+            continue
+        out.append(userId)
+    return out
+
+
+def _hasPointDelta(deltas: HonorGuardPointDeltas) -> bool:
+    return any(
+        float(value or 0) > 0
+        for value in (
+            deltas.quotaPoints,
+            deltas.promotionEventPoints,
+            deltas.promotionAwardedPoints,
+            deltas.hostedEvents,
+        )
+    )
+
+
+async def _resolveRobloxUsernameForUser(
+    userId: int,
+    *,
+    guildId: int = 0,
+    configModule: Any = config,
+) -> str:
+    safeUserId = int(userId or 0)
+    if safeUserId <= 0:
+        return ""
+
+    try:
+        from features.staff.honorGuard import sheets as honorGuardSheets
+
+        member = honorGuardSheets.readMember(discordId=safeUserId, configModule=configModule)
+    except Exception:
+        member = None
+    if member is not None and str(member.robloxUsername or "").strip():
+        return str(member.robloxUsername or "").strip()
+
+    stored = await roverIdentity.getStoredRobloxIdentity(safeUserId)
+    if stored is not None and str(getattr(stored, "robloxUsername", "") or "").strip():
+        return str(getattr(stored, "robloxUsername", "") or "").strip()
+
+    lookup = await roverIdentity.fetchRobloxUser(safeUserId, guildId=int(guildId or 0))
+    return str(getattr(lookup, "robloxUsername", "") or "").strip()
+
+
+async def _resolveEventParticipantContext(
+    userId: int,
+    *,
+    guildId: int = 0,
+    configModule: Any = config,
+) -> dict[str, Any]:
+    safeUserId = int(userId or 0)
+    rank = ""
+    memberGroup = ""
+    robloxUsername = ""
+    try:
+        from features.staff.honorGuard import sheets as honorGuardSheets
+
+        member = honorGuardSheets.readMember(discordId=safeUserId, configModule=configModule)
+    except Exception:
+        member = None
+    if member is not None:
+        rank = str(member.rank or "").strip()
+        memberGroup = _rankGroup(rank, configModule=configModule)
+        robloxUsername = str(member.robloxUsername or "").strip()
+    if not robloxUsername:
+        robloxUsername = await _resolveRobloxUsernameForUser(
+            safeUserId,
+            guildId=int(guildId or 0),
+            configModule=configModule,
+        )
+    return {
+        "userId": safeUserId,
+        "rank": rank,
+        "memberGroup": memberGroup,
+        "robloxUsername": robloxUsername,
+    }
+
+
+async def _resolveUserListText(
+    userIds: list[int],
+    *,
+    guildId: int = 0,
+    configModule: Any = config,
+) -> str:
+    parts: list[str] = []
+    for userId in _normalizeUserIdList(userIds):
+        robloxUsername = await _resolveRobloxUsernameForUser(
+            userId,
+            guildId=int(guildId or 0),
+            configModule=configModule,
+        )
+        parts.append(robloxUsername or str(int(userId)))
+    return ", ".join(parts)
+
+
+async def createEventClockinSession(
+    *,
+    guildId: int,
+    channelId: int,
+    hostId: int,
+    eventType: str,
+    eventTitle: str = "",
+    eventDate: str = "",
+    hostRobloxUsername: str = "",
+    coHostUserIds: list[int] | None = None,
+    supervisorUserIds: list[int] | None = None,
+    scheduleEventId: str = "",
+    notes: str = "",
+    maxAttendeeLimit: int = 30,
+    createdBy: int = 0,
+    configModule: Any = config,
+) -> int:
+    normalizedHostId = int(hostId or 0)
+    normalizedGuildId = int(guildId or 0)
+    normalizedChannelId = int(channelId or 0)
+    normalizedCohosts = [userId for userId in _normalizeUserIdList(coHostUserIds) if userId != normalizedHostId]
+    normalizedSupervisors = [
+        userId
+        for userId in _normalizeUserIdList(supervisorUserIds)
+        if userId not in {normalizedHostId, *normalizedCohosts}
+    ]
+    resolvedHostRoblox = str(hostRobloxUsername or "").strip() or await _resolveRobloxUsernameForUser(
+        normalizedHostId,
+        guildId=normalizedGuildId,
+        configModule=configModule,
+    )
+    cohostsText = await _resolveUserListText(
+        normalizedCohosts,
+        guildId=normalizedGuildId,
+        configModule=configModule,
+    )
+    supervisorsText = await _resolveUserListText(
+        normalizedSupervisors,
+        guildId=normalizedGuildId,
+        configModule=configModule,
+    )
+
+    sessionId = await sessionService.createSession(
+        guildId=normalizedGuildId,
+        channelId=normalizedChannelId,
+        messageId=0,
+        sessionType=HONOR_GUARD_EVENT_SESSION_TYPE,
+        hostId=normalizedHostId,
+        password="",
+        maxAttendeeLimit=max(1, int(maxAttendeeLimit or 30)),
+    )
+    await createEventRecord(
+        clockinSessionId=int(sessionId),
+        guildId=normalizedGuildId,
+        eventType=_eventType(eventType),
+        eventTitle=str(eventTitle or "").strip(),
+        eventDate=str(eventDate or "").strip(),
+        hostUserId=normalizedHostId,
+        hostRobloxUsername=resolvedHostRoblox,
+        attendeeCount=0,
+        metadata={
+            "coHostUserIds": normalizedCohosts,
+            "supervisorUserIds": normalizedSupervisors,
+            "coHosts": cohostsText,
+            "supervisors": supervisorsText,
+            "scheduleEventId": str(scheduleEventId or "").strip(),
+            "notes": str(notes or "").strip(),
+        },
+        createdBy=int(createdBy or normalizedHostId or 0),
+    )
+    return int(sessionId)
+
+
+async def getEventRecordByClockinSessionId(sessionId: int) -> Optional[dict[str, Any]]:
+    return await fetchOne(
+        "SELECT * FROM hg_event_records WHERE clockinSessionId = ? ORDER BY eventRecordId DESC LIMIT 1",
+        (int(sessionId),),
+    )
+
+
+async def getEventClockinSession(sessionId: int) -> Optional[dict[str, Any]]:
+    session = await sessionService.getSession(int(sessionId))
+    if session is None:
+        return None
+    if str(session.get("sessionType") or "").strip().lower() != HONOR_GUARD_EVENT_SESSION_TYPE:
+        return None
+    record = await getEventRecordByClockinSessionId(int(sessionId))
+    metadata = _jsonDict((record or {}).get("metadataJson"))
+    merged = dict(session)
+    merged["eventRecordId"] = int((record or {}).get("eventRecordId") or 0)
+    merged["eventType"] = str((record or {}).get("eventType") or "").strip()
+    merged["eventTitle"] = str((record or {}).get("eventTitle") or "").strip()
+    merged["eventDate"] = str((record or {}).get("eventDate") or "").strip()
+    merged["hostRobloxUsername"] = str((record or {}).get("hostRobloxUsername") or "").strip()
+    merged["coHostUserIds"] = _normalizeUserIdList(metadata.get("coHostUserIds"))
+    merged["supervisorUserIds"] = _normalizeUserIdList(metadata.get("supervisorUserIds"))
+    merged["scheduleEventId"] = str(metadata.get("scheduleEventId") or "").strip()
+    merged["notes"] = str(metadata.get("notes") or "").strip()
+    merged["coHosts"] = str(metadata.get("coHosts") or "").strip()
+    merged["supervisors"] = str(metadata.get("supervisors") or "").strip()
+    return merged
+
+
+async def listOpenEventClockinSessions() -> list[dict[str, Any]]:
+    sessions = await sessionService.getSessionsByStatus(["OPEN"])
+    out: list[dict[str, Any]] = []
+    for session in sessions:
+        if str(session.get("sessionType") or "").strip().lower() != HONOR_GUARD_EVENT_SESSION_TYPE:
+            continue
+        merged = await getEventClockinSession(int(session.get("sessionId") or 0))
+        if merged is not None:
+            out.append(merged)
+    return out
+
+
+async def setEventClockinMessageId(sessionId: int, messageId: int) -> None:
+    await sessionService.setSessionMessageId(int(sessionId), int(messageId))
+
+
+async def listEventClockinAttendees(sessionId: int) -> list[dict[str, Any]]:
+    return await sessionService.getAttendees(int(sessionId))
+
+
+async def addEventClockinAttendee(sessionId: int, userId: int) -> None:
+    await sessionService.addAttendee(int(sessionId), int(userId))
+
+
+async def removeEventClockinAttendee(sessionId: int, userId: int) -> None:
+    await sessionService.removeAttendee(int(sessionId), int(userId))
+
+
+async def updateEventClockinStatus(sessionId: int, status: str) -> None:
+    await sessionService.setStatus(int(sessionId), str(status or "").strip().upper())
+
+
+async def finalizeEventClockinSession(
+    sessionId: int,
+    *,
+    finalizedBy: int,
+    configModule: Any = config,
+) -> dict[str, Any]:
+    session = await getEventClockinSession(int(sessionId))
+    if session is None:
+        raise ValueError("Honor-Guard event clock-in not found.")
+
+    currentStatus = str(session.get("status") or "").strip().upper()
+    if currentStatus != "OPEN":
+        raise ValueError("This Honor-Guard event clock-in is no longer open.")
+
+    record = await getEventRecordByClockinSessionId(int(sessionId))
+    if record is None:
+        raise ValueError("Honor-Guard event record not found.")
+
+    metadata = _jsonDict(record.get("metadataJson"))
+    attendeeRows = await sessionService.getAttendees(int(sessionId))
+    attendeeUserIds = [
+        int(row.get("userId") or 0)
+        for row in attendeeRows
+        if int(row.get("userId") or 0) > 0
+    ]
+    attendeeCount = len(attendeeUserIds)
+    eventType = str(record.get("eventType") or "").strip()
+    eventTitle = str(record.get("eventTitle") or "").strip()
+    eventDate = str(record.get("eventDate") or "").strip()
+    hostId = int(record.get("hostUserId") or 0)
+    hostRobloxUsername = str(record.get("hostRobloxUsername") or "").strip()
+    coHostUserIds = _normalizeUserIdList(metadata.get("coHostUserIds"))
+    supervisorUserIds = _normalizeUserIdList(metadata.get("supervisorUserIds"))
+    participantRoleRows: list[tuple[int, str]] = []
+    if hostId > 0:
+        participantRoleRows.append((hostId, "host"))
+    participantRoleRows.extend((userId, "cohost") for userId in coHostUserIds if userId != hostId)
+    participantRoleRows.extend(
+        (userId, "supervisor")
+        for userId in supervisorUserIds
+        if userId not in {hostId, *coHostUserIds}
+    )
+    participantRoleRows.extend(
+        (userId, "attendee")
+        for userId in attendeeUserIds
+        if userId not in {hostId, *coHostUserIds, *supervisorUserIds}
+    )
+
+    sheetResults: list[dict[str, Any]] = []
+    createdRecordIds: list[int] = []
+    unresolvedUsers: list[int] = []
+    for userId, participationRole in participantRoleRows:
+        context = await _resolveEventParticipantContext(
+            int(userId),
+            guildId=int(session.get("guildId") or 0),
+            configModule=configModule,
+        )
+        deltas = calculatePointDeltas(
+            configModule=configModule,
+            memberRank=str(context.get("rank") or "").strip(),
+            memberGroup=str(context.get("memberGroup") or "").strip(),
+            eventType=eventType,
+            participationRole=participationRole,
+            attendeeCount=attendeeCount,
+        )
+        recordId = await createAttendanceRecord(
+            guildId=int(session.get("guildId") or 0),
+            eventType=eventType,
+            targetUserId=int(userId),
+            targetRobloxUsername=str(context.get("robloxUsername") or "").strip(),
+            eventTitle=eventTitle,
+            eventDate=eventDate,
+            participationRole=participationRole,
+            memberGroup=str(context.get("memberGroup") or "").strip(),
+            attendeeCount=attendeeCount,
+            gradedAttendeeCount=attendeeCount if eventType in {"jge", "nco_exam"} and participationRole == "host" else 0,
+            assistedScreens=False,
+            deltas=deltas,
+            createdBy=int(finalizedBy or 0),
+            approvedBy=int(finalizedBy or 0),
+            submissionId=0,
+        )
+        createdRecordIds.append(int(recordId))
+
+        if not _hasPointDelta(deltas):
+            continue
+
+        try:
+            from features.staff.honorGuard import sheets as honorGuardSheets
+
+            sheetUpdate = honorGuardSheets.applyMemberPointDeltas(
+                discordId=int(userId),
+                robloxUsername=str(context.get("robloxUsername") or "").strip(),
+                quotaDelta=float(deltas.quotaPoints),
+                promotionEventDelta=float(deltas.promotionEventPoints),
+                promotionAwardedDelta=float(deltas.promotionAwardedPoints),
+                hostedEventsDelta=int(deltas.hostedEvents),
+                configModule=configModule,
+            )
+            sheetResults.append(
+                {
+                    "userId": int(userId),
+                    "role": participationRole,
+                    "robloxUsername": str(sheetUpdate.robloxUsername or "").strip(),
+                    "quotaPoints": float(deltas.quotaPoints),
+                    "promotionEventPoints": float(deltas.promotionEventPoints),
+                    "hostedEvents": int(deltas.hostedEvents),
+                }
+            )
+        except Exception:
+            unresolvedUsers.append(int(userId))
+
+    await execute(
+        """
+        UPDATE hg_event_records
+        SET attendeeCount = ?
+        WHERE eventRecordId = ?
+        """,
+        (int(attendeeCount), int(record.get("eventRecordId") or 0)),
+    )
+
+    archiveResult: dict[str, Any] | None = None
+    archiveError = ""
+    try:
+        archiveResult = await syncEventRecordToSheets(int(record.get("eventRecordId") or 0))
+    except Exception as exc:
+        archiveError = str(exc)
+
+    await sessionService.finishSession(int(sessionId))
+    await _rememberHonorGuardIdentity(
+        userId=hostId,
+        robloxUsername=hostRobloxUsername,
+        guildId=int(session.get("guildId") or 0),
+        source="honor-guard-event-host",
+    )
+
+    return {
+        "sessionId": int(sessionId),
+        "eventRecordId": int(record.get("eventRecordId") or 0),
+        "eventType": eventType,
+        "eventTitle": eventTitle,
+        "eventDate": eventDate,
+        "attendeeCount": attendeeCount,
+        "createdAttendanceRecords": len(createdRecordIds),
+        "updatedUsers": len(sheetResults),
+        "unresolvedUsers": unresolvedUsers,
+        "archiveResult": archiveResult or {},
+        "archiveError": archiveError,
+    }
+
+
 async def createPointAwardSubmission(
     *,
     guildId: int,
@@ -343,6 +736,7 @@ async def createPointAwardSubmission(
         metadata={
             "reason": str(reason or "").strip(),
             "awardedPoints": awardedDelta,
+            "eventPoints": awardedDelta,
             "quotaPoints": float(quotaPoints or 0),
         },
     )
@@ -364,7 +758,12 @@ async def getPointAwardSubmission(submissionId: int) -> Optional[dict[str, Any]]
     enriched["awardedUserId"] = targetUserId
     enriched["recruitUserId"] = targetUserId
     enriched["awardedPoints"] = awardedPoints
-    enriched["eventPoints"] = float(submission.get("promotionEventPoints") or metadata.get("eventPoints") or 0)
+    enriched["eventPoints"] = float(
+        submission.get("promotionEventPoints")
+        or metadata.get("eventPoints")
+        or awardedPoints
+        or 0
+    )
     enriched["reason"] = str(metadata.get("reason") or "").strip()
     return enriched
 
@@ -529,7 +928,7 @@ async def setSubmissionStatus(
 ) -> None:
     submission = await getSubmission(int(submissionId))
     if submission is None:
-        raise ValueError(f"Honor Guard submission not found: {submissionId}")
+        raise ValueError(f"Honor-Guard submission not found: {submissionId}")
     fromStatus = _normalizeStatus(submission.get("status"))
     toStatus = _normalizeStatus(status)
     await execute(
@@ -813,7 +1212,7 @@ async def createSentrySubmission(
     userId = int(targetUserId or submitterId)
     existing = await findExistingSentryLogForDate(userId=userId, dutyDate=dutyDate)
     if existing is not None:
-        raise ValueError("A pending or approved Honor Guard sentry log already exists for that user/date.")
+        raise ValueError("A pending or approved Honor-Guard sentry log already exists for that user/date.")
 
     dutyMinutes = int(minutes or getattr(configModule, "honorGuardSentryDutyMinutesRequired", 30) or 30)
     deltas = HonorGuardPointDeltas(
@@ -938,6 +1337,7 @@ async def updateSentrySubmissionStatus(
 
 async def createEventRecord(
     *,
+    clockinSessionId: int = 0,
     guildId: int,
     eventType: str,
     eventTitle: str = "",
@@ -953,13 +1353,14 @@ async def createEventRecord(
         """
         INSERT INTO hg_event_records
             (
-                submissionId, guildId, eventType, eventTitle, eventDate, hostUserId,
-                hostRobloxUsername, attendeeCount, metadataJson, createdBy
+                submissionId, clockinSessionId, guildId, eventType, eventTitle, eventDate,
+                hostUserId, hostRobloxUsername, attendeeCount, metadataJson, createdBy
             )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             int(submissionId or 0),
+            int(clockinSessionId or 0),
             int(guildId),
             _eventType(eventType),
             str(eventTitle or "").strip(),
@@ -983,7 +1384,7 @@ async def getEventRecord(eventRecordId: int) -> Optional[dict[str, Any]]:
 async def syncEventRecordToSheets(eventRecordId: int) -> dict[str, Any]:
     record = await getEventRecord(int(eventRecordId))
     if record is None:
-        raise ValueError(f"Honor Guard event record not found: {eventRecordId}")
+        raise ValueError(f"Honor-Guard event record not found: {eventRecordId}")
 
     from features.staff.honorGuard import sheets as honorGuardSheets
 
@@ -1034,9 +1435,9 @@ async def syncEventRecordToSheets(eventRecordId: int) -> dict[str, Any]:
 async def syncApprovedSubmissionToSheet(submissionId: int) -> dict[str, Any]:
     submission = await getSubmission(int(submissionId))
     if submission is None:
-        raise ValueError(f"Honor Guard submission not found: {submissionId}")
+        raise ValueError(f"Honor-Guard submission not found: {submissionId}")
     if _normalizeStatus(submission.get("status")) != "APPROVED":
-        raise ValueError("Only approved Honor Guard submissions can be synced.")
+        raise ValueError("Only approved Honor-Guard submissions can be synced.")
     if int(submission.get("sheetSynced") or 0):
         await ensurePointAwardRecordsForSubmission(
             submission=submission,

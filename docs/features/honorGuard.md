@@ -8,7 +8,26 @@ It is based on:
 - the imported public-branch scaffolding
 - the follow-up transcript explaining how HG actually wants the system to work
 
-This is not a finished implementation doc. It is the working contract we should code against so we stop mixing draft branch assumptions with the real workflow.
+This is not a finished implementation doc. It is the working contract we should code against so future changes have one shared reference point.
+
+## Current Public-Branch Sync Rule
+
+The public `Honor-Guard` branch is useful. It is a more recent branch of HG work, and parts of it were manually merged into this repo earlier. Because that merge was selective, the branch and the local private repo are now two related but diverged versions of the same feature.
+
+Use it as history for:
+
+- the `/honorguard-award-points` shape
+- the review buttons for point awards
+- the general idea that HG work should be public-safe when possible
+
+When bringing public-branch work back into the private repo, port it selectively and think about these areas with the current backend:
+
+- the `hg_main` member-state table draft
+- the branch's point-award table fields
+- exported config differences from the public branch
+- placeholder commands that may not include later private-repo behavior
+
+The local private repo should keep the current submission-based model unless we intentionally migrate it. It should also preserve branch-facing command language where that helps staff muscle memory. For example, manual point awards still expose `event-points` in the command while the service maps that into the current awarded-point accounting rows.
 
 ## Where It Lives
 
@@ -66,7 +85,7 @@ The database is not just a testing layer. It is the durable internal record Jane
 
 The database should not become a second competing copy of the full member ORBAT unless we explicitly decide to do that later.
 
-This is one of the main places where the old public branch drifted. That branch experimented with an `hg_main` style DB copy. The current private repo should not assume that model.
+This is one of the main places where the public branch and private repo ended up with different assumptions. The branch experimented with an `hg_main` style DB copy. The current private repo should not assume that model unless we decide to migrate toward it on purpose.
 
 ## Non-Goals For Phase 1
 
@@ -330,8 +349,9 @@ More specifically, the project roadmap implied by the chat is:
 
 ## Practical Rule
 
-When branch code, transcript guesses, and current private backend disagree:
+When branch code, transcript notes, and current private backend are not aligned:
 
 - prefer the real HG workflow described in the transcript
-- prefer the private repo's newer table/service model over the older public-branch DB draft
+- prefer the private repo's current table/service model unless we intentionally migrate it
 - do not introduce a second member-state source of truth unless we explicitly choose that on purpose
+- keep public-facing command names stable when existing branch users may have learned them

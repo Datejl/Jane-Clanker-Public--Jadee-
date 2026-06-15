@@ -50,15 +50,15 @@ def buildPointAwardEmbed(submission: Mapping[str, Any]) -> discord.Embed:
     )
     reason = str(submission.get("reason") or "").strip() or "_No reason provided._"
     embed = discord.Embed(
-        title="Honor Guard Point Award",
+        title="Honor-Guard Point Award",
         color=discord.Color.gold(),
     )
     embed.add_field(name="Awarder", value=_mentionUser(submission.get("submitterId")), inline=False)
     embed.add_field(name="Awarded User", value=_mentionUser(awardedUserId), inline=False)
     embed.add_field(name="Quota Points", value=_formatPoints(submission.get("quotaPoints")), inline=True)
     embed.add_field(
-        name="Awarded Promotion Points",
-        value=_formatPoints(submission.get("awardedPoints")),
+        name="Event Points",
+        value=_formatPoints(submission.get("eventPoints") or submission.get("awardedPoints")),
         inline=True,
     )
     embed.add_field(name="Reason", value=reason, inline=False)
@@ -74,7 +74,7 @@ def buildSentrySubmissionEmbed(submission: Mapping[str, Any]) -> discord.Embed:
     evidenceMessageUrl = str(submission.get("evidenceMessageUrl") or "").strip()
 
     embed = discord.Embed(
-        title="Honor Guard Solo Sentry",
+        title="Honor-Guard Solo Sentry",
         color=discord.Color.orange(),
     )
     embed.add_field(name="Submitter", value=_mentionUser(submission.get("submitterId")), inline=False)
@@ -98,4 +98,51 @@ def buildSentrySubmissionEmbed(submission: Mapping[str, Any]) -> discord.Embed:
         if preview:
             embed.add_field(name="Evidence", value=_clip(preview), inline=False)
     embed.add_field(name="Status", value=statusIcon(str(submission.get("status") or "")), inline=False)
+    return embed
+
+
+def _mentionList(userIds: object) -> str:
+    values: list[str] = []
+    for raw in list(userIds or []):
+        try:
+            userId = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if userId <= 0:
+            continue
+        values.append(f"<@{userId}>")
+    return ", ".join(values) if values else "_None_"
+
+
+def buildEventClockinEmbed(session: Mapping[str, Any], attendees: list[dict[str, Any]]) -> discord.Embed:
+    attendeeLines = [
+        f"{index}. <@{int(row.get('userId') or 0)}>"
+        for index, row in enumerate(attendees, start=1)
+        if int(row.get("userId") or 0) > 0
+    ]
+    attendeeValue = "\n".join(attendeeLines) if attendeeLines else "No attendees yet."
+    maxAttendeeLimit = int(session.get("maxAttendeeLimit") or 30)
+    eventDate = str(session.get("eventDate") or "").strip() or "Not set"
+    eventTitle = str(session.get("eventTitle") or "").strip() or "Honor-Guard Event"
+    notes = str(session.get("notes") or "").strip()
+    status = str(session.get("status") or "OPEN").strip().upper() or "OPEN"
+
+    embed = discord.Embed(
+        title="Honor-Guard Event Clock-in",
+        description=eventTitle,
+        color=discord.Color.blurple(),
+    )
+    embed.add_field(name="Event Type", value=f"`{str(session.get('eventType') or 'event')}`", inline=True)
+    embed.add_field(name="Event Time", value=f"`{eventDate}`", inline=True)
+    embed.add_field(name="Host", value=_mentionUser(session.get("hostId")), inline=False)
+    embed.add_field(name="Co-hosts", value=_mentionList(session.get("coHostUserIds") or []), inline=False)
+    embed.add_field(name="Supervisors", value=_mentionList(session.get("supervisorUserIds") or []), inline=False)
+    embed.add_field(
+        name=f"Attendees ({len(attendeeLines)}/{maxAttendeeLimit})",
+        value=_clip(attendeeValue),
+        inline=False,
+    )
+    if notes:
+        embed.add_field(name="Notes", value=_clip(notes), inline=False)
+    embed.add_field(name="Status", value=f"`{status}`", inline=False)
     return embed
