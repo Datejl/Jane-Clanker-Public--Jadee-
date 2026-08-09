@@ -1,6 +1,6 @@
 ﻿from __future__ import annotations
 
-from typing import Awaitable, Callable, Optional
+from typing import Callable, Optional
 
 import runtime.interaction as interactionRuntime
 from runtime import permissions as runtimePermissions
@@ -82,18 +82,15 @@ class VoiceChatCog(commands.Cog):
         cohost1: Member | None,
         cohost2: Member | None,
     ) -> VoiceChannel | None:
-        creator: Callable[[], Awaitable[VoiceChannel | None]]
         if voiceChatType == "Shift":
-            creator = lambda: createShiftVoiceChatWithPerms(self.bot, cohost1, cohost2)
-        elif voiceChatType == "Gamenight":
-            creator = lambda: createGamenightVoiceChatWithPerms(self.bot, cohost1, cohost2)
-        elif voiceChatType == "Breakroom":
-            creator = lambda: createBreakroomVoiceChatWithPerms(self.bot, cohost1, cohost2)
-        elif voiceChatType == "Supervisor comms":
-            creator = lambda: createSupervisorCommsVoiceChatWithPerms(self.bot, cohost1, cohost2)
-        else:
-            return None
-        return await creator()
+            return await createShiftVoiceChatWithPerms(self.bot, cohost1, cohost2)
+        if voiceChatType == "Gamenight":
+            return await createGamenightVoiceChatWithPerms(self.bot, cohost1, cohost2)
+        if voiceChatType == "Breakroom":
+            return await createBreakroomVoiceChatWithPerms(self.bot, cohost1, cohost2)
+        if voiceChatType == "Supervisor comms":
+            return await createSupervisorCommsVoiceChatWithPerms(self.bot, cohost1, cohost2)
+        return None
 
     @app_commands.command(name="create-voice-chat", description="Create a temporary voice chat channel.")
     @app_commands.guild_only()

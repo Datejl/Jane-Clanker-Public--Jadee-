@@ -28,6 +28,9 @@ _eyesRegex = re.compile(r"^\s*(?::eyes:|👀)\s*$", re.IGNORECASE)
 _tanabataTreeRegex = re.compile("^\\s*(?::tanabata_tree:|\U0001F38B)\\s*$", re.IGNORECASE)
 _recipePromptRegex = re.compile(r"how\s+do\s+i\s+make\s+(?P<item>[^?\n\r]+)", re.IGNORECASE)
 _auraRegex = re.compile(r"\b(how much aura do you have|do you have aura|what amount of aura do you have)\b", re.IGNORECASE)
+_furryQueryRegex = re.compile(r"\bis\s+<@!?(\d+)>\s+a\s+furry\b", re.IGNORECASE)
+_whoIsFurryRegex = re.compile(r"\bwho(?:'s| is)\s+a\s+furry\b", re.IGNORECASE)
+_notAFurryRegex = re.compile(r"\bi\s*'?\s*m\s+not\s+a\s+furry\b", re.IGNORECASE)
 
 _americaYaUserIds = {
     768228862684299265,
@@ -64,6 +67,8 @@ _perishGifUrl = "https://media.discordapp.net/attachments/1373420224363102208/14
 _stimmerUserId = 641429806382317583
 _momUserId = 331660652672319488
 _bumUserId = 952282215033745448
+_furryUserId = 764302305368735748
+_notAFurryUserIds = {_furryUserId}
 _janeGreetingBlacklistedUserIds = {
     1220034130805260288,
 }
@@ -103,6 +108,19 @@ def _isSixtySevenTrigger(content: str) -> bool:
 
 async def _tryChannelSend(channel: discord.abc.Messageable, content: str) -> bool:
     return await interactionRuntime.safeChannelSend(channel, content=content) is not None
+
+
+async def _tryChannelSendEmbed(
+    channel: discord.abc.Messageable,
+    embed: discord.Embed,
+    *,
+    allowedMentions: discord.AllowedMentions | None = None,
+) -> bool:
+    return await interactionRuntime.safeChannelSend(
+        channel,
+        embed=embed,
+        allowedMentions=allowedMentions,
+    ) is not None
 
 
 async def _getMemberById(guild: discord.Guild, userId: int) -> discord.Member | None:
@@ -254,6 +272,10 @@ def _isPerishTrigger(content: str) -> bool:
     return _normalizeText(str(content or "")) == "perish"
 
 
+def _isNotAFurryTrigger(content: str) -> bool:
+    return bool(_notAFurryRegex.search(str(content or "")))
+
+
 _DirectSillyResponse = tuple[set[int], Callable[[str], bool], str]
 _directSillyResponses: tuple[_DirectSillyResponse, ...] = (
     (_americaYaUserIds, _isAmericaYaTrigger, "Hallo!"),
@@ -262,6 +284,7 @@ _directSillyResponses: tuple[_DirectSillyResponse, ...] = (
     (_eyesUserIds, _isEyesTrigger, _eyesGifUrl),
     (_tanabataTreeUserIds, _isTanabataTreeTrigger, _tanabataTreeGifUrl),
     (_perishUserIds, _isPerishTrigger, _perishGifUrl),
+    (_notAFurryUserIds, _isNotAFurryTrigger, "yeah sure"),
 )
 
 
@@ -412,7 +435,7 @@ async def handleKillCommand(message: discord.Message, botClient: discord.Client)
         return False
 
     if not runtimePermissions.hasMiddleHighRankRole(message.author):
-        await message.channel.send("Only MR/HR roles can use `!kill`.")
+        await _tryChannelSend(message.channel, "Only MR/HR roles can use `!kill`.")
         return True
 
     parts = raw.split(maxsplit=1)
@@ -426,7 +449,7 @@ async def handleKillCommand(message: discord.Message, botClient: discord.Client)
         target = await _resolveReplyTarget(message)
 
     if target is None:
-        await message.channel.send("Usage: `!kill @user`")
+        await _tryChannelSend(message.channel, "Usage: `!kill @user`")
         return True
 
     nowUtc = datetime.now(timezone.utc)
@@ -444,9 +467,10 @@ async def handleKillCommand(message: discord.Message, botClient: discord.Client)
 
     sentViaWebhook = await _sendKillWebhook(message, botClient, embed=embed)
     if not sentViaWebhook:
-        await message.channel.send(
+        await _tryChannelSendEmbed(
+            message.channel,
             embed=embed,
-            allowed_mentions=discord.AllowedMentions(users=False, roles=False, everyone=False),
+            allowedMentions=discord.AllowedMentions(users=False, roles=False, everyone=False),
         )
     return True
 
@@ -468,7 +492,7 @@ async def handleSkinCommand(
 
     parts = raw.split(maxsplit=1)
     if int(message.author.id) not in _skinAllowedUserIds and not hasSkinPermission(message.author):
-        await message.channel.send("You do not have permission to skin users.")
+        await _tryChannelSend(message.channel, "You do not have permission to skin users.")
         return True
 
     if not _isSkinCooldownBypassed(message.author):
@@ -479,7 +503,7 @@ async def handleSkinCommand(
             remainingSec = max(1, int((nextAllowedAt - nowUtc).total_seconds()))
             mins, secs = divmod(remainingSec, 60)
             waitText = f"{mins}m {secs:02d}s" if mins > 0 else f"{secs}s"
-            await message.channel.send(f"You're on cooldown for `!skin`. Try again in {waitText}.")
+            await _tryChannelSend(message.channel, f"You're on cooldown for `!skin`. Try again in {waitText}.")
             return True
         cooldownSec = _skinCooldownSecForMember(message.author)
         if cooldownSec > 0:
@@ -496,23 +520,23 @@ async def handleSkinCommand(
         target = await _resolveReplyTarget(message)
 
     if target is None:
-        await message.channel.send("Usage: `!skin username`")
+        await _tryChannelSend(message.channel, "Usage: `!skin username`")
         return True
 
     if bool(getattr(target, "bot", False)) or bool(getattr(target, "system", False)):
-        await message.channel.send("I can't skin bots or app accounts.")
+        await _tryChannelSend(message.channel, "I can't skin bots or app accounts.")
         return True
 
     if int(target.id) == _janeUserId:
-        await message.channel.send("why would i skin myself????")
+        await _tryChannelSend(message.channel, "why would i skin myself????")
         return True
 
     if int(target.id) == _momUserId:
-        await message.channel.send("That's my mom, dude :woman_standing:")
+        await _tryChannelSend(message.channel, "That's my mom, dude :woman_standing:")
         return True
 
     if int(target.id) == _unknownUserId:
-        await message.channel.send("Sorry, but no. Get skinned. heh.")
+        await _tryChannelSend(message.channel, "Sorry, but no. Get skinned. heh.")
 
         newNickname = _buildSkinnedNickname(message.author.display_name)
         try:
@@ -521,14 +545,14 @@ async def handleSkinCommand(
                 reason=f"Reverse skinned by {target} ({target.id})",
             )
         except (discord.Forbidden, discord.HTTPException):
-            await message.channel.send("I couldn't change that nickname (role hierarchy or permissions).")
+            await _tryChannelSend(message.channel, "I couldn't change that nickname (role hierarchy or permissions).")
             return True
 
         return True
 
     newNickname = _buildSkinnedNickname(target.display_name)
     if target.display_name == newNickname:
-        await message.channel.send(f"{target.mention} is already skinned.")
+        await _tryChannelSend(message.channel, f"{target.mention} is already skinned.")
         return True
 
     try:
@@ -537,7 +561,7 @@ async def handleSkinCommand(
             reason=f"Skinned by {message.author} ({message.author.id})",
         )
     except (discord.Forbidden, discord.HTTPException):
-        await message.channel.send("I couldn't change that nickname (role hierarchy or permissions).")
+        await _tryChannelSend(message.channel, "I couldn't change that nickname (role hierarchy or permissions).")
         return True
 
     jokes = [
@@ -558,7 +582,7 @@ async def handleSkinCommand(
 
     sentViaWebhook = await _sendSkinWebhook(message, botClient, embed=embed)
     if not sentViaWebhook:
-        await message.channel.send(embed=embed)
+        await _tryChannelSendEmbed(message.channel, embed)
     return True
 
 
@@ -573,7 +597,7 @@ async def handleCasinoToggleCommand(message: discord.Message) -> bool:
         return False
 
     if not message.author.guild_permissions.administrator:
-        await message.channel.send("You do not have permission to use this command.")
+        await _tryChannelSend(message.channel, "You do not have permission to use this command.")
         return True
 
     from silly import gamblingCog
@@ -588,9 +612,7 @@ async def handleCasinoToggleCommand(message: discord.Message) -> bool:
         enabled = gamblingCog.toggleCategoryLockEnabled()
 
     stateText = "ENABLED" if enabled else "DISABLED"
-    await message.channel.send(
-        f"Gambling category lock is now **{stateText}**."
-    )
+    await _tryChannelSend(message.channel, f"Gambling category lock is now **{stateText}**.")
     return True
 
 
@@ -646,6 +668,22 @@ async def maybeHandleSillyMentions(message: discord.Message, botClient: discord.
         if await _tryChannelSend(message.channel, _hampterGifUrl):
             await interactionRuntime.safeMessageDelete(message)
         return
+
+    if isMentioningJane:
+        furryQueryMatch = _furryQueryRegex.search(content)
+        if furryQueryMatch:
+            queriedUserId = int(furryQueryMatch.group(1))
+            reply = "Yes" if queriedUserId == _furryUserId else "unknown"
+            await _tryChannelSend(message.channel, reply)
+            return
+
+        if _whoIsFurryRegex.search(content):
+            await interactionRuntime.safeChannelSend(
+                message.channel,
+                content=f"<@{_furryUserId}> is a furry",
+                allowed_mentions=discord.AllowedMentions(users=False, roles=False, everyone=False),
+            )
+            return
 
     if isMentioningJane and _isBumLocatorTrigger(content):
         locatingMessage = await interactionRuntime.safeChannelSend(

@@ -5,13 +5,19 @@ import json
 import unittest
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import characters
 import config
 import discord
-from cogs.staff.bgIntelligenceCog import BgIntelDetailsView, BgIntelligenceCog, BgIntelProgressRelay
+from cogs.staff.bgIntelligenceCog import (
+    BgIntelDetailsView,
+    BgIntelligenceCog,
+    BgIntelProgressRelay,
+    _updateBgIntelSheetLinkSafe,
+)
 from features.staff.bgIntelligence import rendering, scoring, service
-from features.staff.sessions import bgBuckets
+from features.staff.sessions import bgBuckets, bgSpreadsheetQueue
 from features.staff.sessions.Roblox import robloxAssets, robloxBadges, robloxGamepasses, robloxInventoryApi, robloxInventoryVisual
 
 
@@ -303,6 +309,37 @@ class BgIntelligenceScoringTests(unittest.TestCase):
         self.assertEqual(repeatedNoScoreScore.score, baselineScore.score)
         self.assertLess(repeatedNoScoreScore.confidence, baselineScore.confidence)
         self.assertFalse(any(signal.points > 0 and "no-score" in signal.label.lower() for signal in repeatedNoScoreScore.signals))
+
+
+class BgIntelligenceSheetLinkTests(unittest.IsolatedAsyncioTestCase):
+    async def test_missing_google_oauth_token_skips_sheet_update_without_traceback(self):
+        report = _report()
+        score = scoring.scoreReport(report)
+        missingTokenError = FileNotFoundError(
+            "Google OAuth token file is missing. Set config.googleOauthTokenPath or "
+            "GOOGLE_OAUTH_TOKEN_PATH to an authorized Google OAuth user token JSON."
+        )
+
+        with (
+            patch.object(
+                bgSpreadsheetQueue,
+                "updateLatestBgIntelSheetLink",
+                AsyncMock(side_effect=missingTokenError),
+            ),
+            self.assertLogs("cogs.staff.bgIntelligenceCog", level="WARNING") as logs,
+        ):
+            result = await _updateBgIntelSheetLinkSafe(
+                report=report,
+                riskScore=score,
+                reportId=42,
+                message=SimpleNamespace(jump_url="https://discord.com/channels/1/2/3"),
+                guildId=1,
+            )
+
+        self.assertFalse(result.updated)
+        self.assertIn("Google OAuth token is missing", result.reason)
+        self.assertIn("Jane Intel sheet link update skipped", result.reason)
+        self.assertFalse(any("Traceback" in line for line in logs.output))
 
 
 class BgIntelligenceRenderingTests(unittest.TestCase):

@@ -142,7 +142,6 @@ class DivisionMultipleChoiceView(runtimeViewBases.OwnerLockedView):
 
     def buildEmbed(self) -> discord.Embed:
         question = self.currentQuestion()
-        total = len(self.choiceQuestions)
         styleLabel = "Required" if bool(question.get("required", True)) else "Optional"
         questionTitle = _choiceQuestionTitle(question)
         selected = self.selections.get(self.currentIndex)

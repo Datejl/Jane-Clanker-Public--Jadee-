@@ -8,7 +8,14 @@ from .definitions import (
     WorkflowDefinition,
     WorkflowStateDefinition,
     getWorkflowDefinition,
+    isWorkflowRegistered,
     listWorkflowDefinitions,
+    registerWorkflowDefinition,
+)
+from .bridge import (
+    WorkflowSubjectBridge,
+    normalizedStatus,
+    stateKeyForStatus,
 )
 from .rendering import buildCompactSummary
 from .service import (
@@ -30,6 +37,7 @@ __all__ = [
     "PROJECT_REVIEW_WORKFLOW",
     "RIBBON_REQUEST_WORKFLOW",
     "WorkflowDefinition",
+    "WorkflowSubjectBridge",
     "WorkflowStateDefinition",
     "buildCompactSummary",
     "countPendingRuns",
@@ -38,8 +46,12 @@ __all__ = [
     "getRunById",
     "getRunBySubject",
     "getWorkflowDefinition",
+    "isWorkflowRegistered",
     "listPendingRuns",
     "listRunEvents",
     "listWorkflowDefinitions",
+    "normalizedStatus",
+    "registerWorkflowDefinition",
+    "stateKeyForStatus",
     "transitionSubjectRun",
 ]

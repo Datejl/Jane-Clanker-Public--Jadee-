@@ -1,7 +1,7 @@
 ﻿from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import discord
 
@@ -10,6 +10,9 @@ from runtime import interaction as interactionRuntime
 from runtime import textFormatting as textFormattingRuntime
 from runtime import viewBases as runtimeViewBases
 from features.staff.ribbons import workflow as ribbonWorkflow
+
+if TYPE_CHECKING:
+    from cogs.staff.ribbonCog import RibbonCog
 
 CATEGORY_ORDER = ("sacks", "gorget", "spbadge", "commendations", "corpus", "ribbons")
 CATEGORY_LABELS = {

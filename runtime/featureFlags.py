@@ -37,6 +37,8 @@ class FeatureFlagService:
         self._cache: dict[tuple[int, str], tuple[bool, datetime]] = {}
         self._cacheTtl = timedelta(seconds=60)
         self._backgroundRefreshes: set[tuple[int, str]] = set()
+        self._backgroundRefreshTasks: dict[tuple[int, str], asyncio.Task] = {}
+        self._stopping = False
 
     def _defaultEnabled(self, featureKey: str) -> bool:
         defaults = getattr(self.config, "featureFlagDefaults", {}) or {}
@@ -187,11 +189,12 @@ class FeatureFlagService:
             )
         finally:
             self._backgroundRefreshes.discard(key)
+            self._backgroundRefreshTasks.pop(key, None)
 
     def refreshCommandFlagCacheSoon(self, guildId: int, commandName: str) -> None:
         safeGuildId = _safeInt(guildId)
         featureKey = self._commandFeatureKey(commandName)
-        if safeGuildId <= 0 or not featureKey:
+        if self._stopping or safeGuildId <= 0 or not featureKey:
             return
         key = self._cacheKey(safeGuildId, featureKey)
         if key in self._backgroundRefreshes:
@@ -201,10 +204,22 @@ class FeatureFlagService:
         except RuntimeError:
             return
         self._backgroundRefreshes.add(key)
-        loop.create_task(
+        task = loop.create_task(
             self._refreshFlagCache(safeGuildId, featureKey),
             name=f"feature-flag-refresh:{safeGuildId}:{featureKey}",
         )
+        self._backgroundRefreshTasks[key] = task
+
+    async def stop(self) -> None:
+        self._stopping = True
+        tasks = set(self._backgroundRefreshTasks.values())
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._backgroundRefreshTasks.clear()
+        self._backgroundRefreshes.clear()
 
     async def exportFlagsJson(self, guildId: int) -> str:
         rows = await self.listFlags(guildId)

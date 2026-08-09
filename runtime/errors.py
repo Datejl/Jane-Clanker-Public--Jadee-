@@ -15,6 +15,34 @@ from . import transientNetwork
 
 log = logging.getLogger(__name__)
 _ERROR_MIRROR_HANDLER_NAME = "jane-error-mirror-dm"
+_GOOGLE_ERROR_MARKERS = (
+    "googleapiclient",
+    "google.auth",
+    "google.oauth",
+    "google api",
+    "google sheets",
+    "google drive",
+    "google oauth",
+    "sheets.googleapis",
+    "drive.googleapis",
+    "spreadsheets().",
+    "spreadsheet",
+    "sheets failure",
+    "sheets error",
+    "sheets operation",
+    "retryable sheets",
+    "google credentials",
+    "missing google credentials",
+    "orbat_google_credentials",
+    "google-oauth",
+    "oauth token",
+    "oauth client",
+    "invalid_grant",
+    "insufficient authentication scopes",
+    "quotaexceeded",
+    "quota exceeded",
+    "protected cell",
+)
 
 
 class ErrorCoordinator:
@@ -163,6 +191,9 @@ class ErrorCoordinator:
         levelName: str,
         message: str,
         renderedError: str,
+        title: str = "Jane Logged Error",
+        content: str = "================ Jane Error Log ================",
+        footer: str = "Mirrored from Python logging",
     ) -> None:
         renderedText = self._truncateForDiscord(str(renderedError or "").strip() or "(no traceback)", 3200)
         description = (
@@ -172,14 +203,14 @@ class ErrorCoordinator:
             f"```py\n{renderedText}\n```"
         )
         embed = discord.Embed(
-            title="Jane Logged Error",
+            title=title or "Jane Logged Error",
             color=discord.Color.red(),
             timestamp=datetime.now(timezone.utc),
             description=self._truncateForDiscord(description, 3900),
         )
-        embed.set_footer(text="Mirrored from Python logging")
+        embed.set_footer(text=footer or "Mirrored from Python logging")
         await self._sendMirrorEmbed(
-            content="================ Jane Error Log ================",
+            content=content or "================ Jane Error Log ================",
             embed=embed,
             retrySource="logged-error-mirror",
         )
@@ -272,7 +303,7 @@ class ErrorCoordinator:
 
 class ErrorMirrorLogHandler(logging.Handler):
     def __init__(self, *, coordinator: ErrorCoordinator, loop: asyncio.AbstractEventLoop) -> None:
-        super().__init__(level=logging.ERROR)
+        super().__init__(level=logging.WARNING)
         self.name = _ERROR_MIRROR_HANDLER_NAME
         self.coordinator = coordinator
         self.loop = loop
@@ -285,6 +316,22 @@ class ErrorMirrorLogHandler(logging.Handler):
             return str(record.stack_info)
         return record.getMessage()
 
+    def _isGoogleRecord(self, record: logging.LogRecord, renderedError: str) -> bool:
+        parts = [
+            str(record.name or ""),
+            str(record.getMessage() or ""),
+            str(renderedError or ""),
+        ]
+        if record.exc_info:
+            exc = record.exc_info[1]
+            if isinstance(exc, BaseException):
+                for current in transientNetwork.walkExceptionChain(exc):
+                    parts.append(current.__class__.__module__)
+                    parts.append(current.__class__.__name__)
+                    parts.append(str(current))
+        haystack = "\n".join(parts).lower()
+        return any(marker in haystack for marker in _GOOGLE_ERROR_MARKERS)
+
     def _isTransientNetworkRecord(self, record: logging.LogRecord) -> bool:
         if record.exc_info:
             exc = record.exc_info[1]
@@ -295,7 +342,11 @@ class ErrorMirrorLogHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         if getattr(record, "skipErrorMirrorDm", False):
             return
-        if self._isTransientNetworkRecord(record):
+        renderedError = self._renderRecord(record)
+        isGoogleRecord = self._isGoogleRecord(record, renderedError)
+        if record.levelno < logging.ERROR and not isGoogleRecord:
+            return
+        if self._isTransientNetworkRecord(record) and not isGoogleRecord:
             return
         if self.loop.is_closed():
             return
@@ -303,7 +354,17 @@ class ErrorMirrorLogHandler(logging.Handler):
             loggerName = str(record.name or "unknown")
             levelName = str(record.levelname or "ERROR")
             message = record.getMessage()
-            renderedError = self._renderRecord(record)
+            title = "Jane Google/Sheets Alert" if isGoogleRecord else "Jane Logged Error"
+            content = (
+                "================ Jane Google/Sheets Alert ================"
+                if isGoogleRecord
+                else "================ Jane Error Log ================"
+            )
+            footer = (
+                "Mirrored from Google/Sheets/OAuth logging"
+                if isGoogleRecord
+                else "Mirrored from Python logging"
+            )
 
             def _schedule() -> None:
                 try:
@@ -313,6 +374,9 @@ class ErrorMirrorLogHandler(logging.Handler):
                             levelName=levelName,
                             message=message,
                             renderedError=renderedError,
+                            title=title,
+                            content=content,
+                            footer=footer,
                         )
                     )
                     task.add_done_callback(self._consumeTaskException)
@@ -344,5 +408,6 @@ def installErrorMirrorLogging(
             if isinstance(handler, ErrorMirrorLogHandler):
                 handler.coordinator = coordinator
                 handler.loop = loop
+                handler.setLevel(logging.WARNING)
             return
     root.addHandler(ErrorMirrorLogHandler(coordinator=coordinator, loop=loop))

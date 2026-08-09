@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 import logging
-import socket
-import ssl
 from typing import Any, Optional
 
-import aiohttp
 import discord
 
-from . import taskBudgeter
+from . import taskBudgeter, transientNetwork
 
 log = logging.getLogger(__name__)
 
@@ -42,43 +39,7 @@ def _shouldRetryReplyWithoutView(exc: TypeError) -> bool:
 
 
 def _isTransientTransportError(exc: Exception) -> bool:
-    transientMarkers = (
-        "wrong version number",
-        "cipher operation failed",
-        "bad record mac",
-        "unexpected eof",
-        "connection reset",
-        "connection aborted",
-        "temporarily unavailable",
-        "timed out",
-        "timeout",
-        "session is closed",
-        "tls",
-        "ssl",
-    )
-
-    current: Exception | None = exc
-    while current is not None:
-        if isinstance(
-            current,
-            (
-                aiohttp.ClientError,
-                ssl.SSLError,
-                socket.timeout,
-                TimeoutError,
-                ConnectionError,
-            ),
-        ):
-            return True
-        if isinstance(current, OSError):
-            lowerMessage = str(current).lower()
-            if any(marker in lowerMessage for marker in transientMarkers):
-                return True
-        lowerMessage = str(current).lower()
-        if any(marker in lowerMessage for marker in transientMarkers):
-            return True
-        current = current.__cause__ if isinstance(current.__cause__, Exception) else None
-    return False
+    return transientNetwork.isLikelyTransientNetworkError(exc)
 
 
 def _isSafeTransportFailure(exc: Exception) -> bool:
@@ -96,6 +57,14 @@ def isUnknownInteractionError(exc: Exception) -> bool:
     return False
 
 
+def isAlreadyAcknowledgedInteractionError(exc: Exception) -> bool:
+    if not isinstance(exc, discord.HTTPException):
+        return False
+    if getattr(exc, "code", None) == 40060:
+        return True
+    return "interaction has already been acknowledged" in str(exc).lower()
+
+
 async def safeInteractionDefer(
     interaction: discord.Interaction,
     *,
@@ -109,6 +78,9 @@ async def safeInteractionDefer(
         await interaction.response.defer(ephemeral=ephemeral, thinking=thinking)
         return True
     except (discord.NotFound, discord.HTTPException) as exc:
+        if isAlreadyAcknowledgedInteractionError(exc):
+            _logSafeFailure("interaction defer already acknowledged", exc)
+            return True
         _logSafeFailure("interaction defer", exc)
         if raiseOnFailure:
             raise InteractionDeferFailed("Interaction could not be acknowledged before it expired.") from exc
@@ -302,7 +274,7 @@ def _makeRetrySafeResponseMethod(originalMethod: Any, action: str) -> Any:
         try:
             return await taskBudgeter.runInteractionAck(lambda: originalMethod(self, *args, **kwargs))
         except (discord.NotFound, discord.HTTPException) as exc:
-            if isUnknownInteractionError(exc):
+            if isUnknownInteractionError(exc) or isAlreadyAcknowledgedInteractionError(exc):
                 _logSafeFailure(action, exc)
                 return None
             raise

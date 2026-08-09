@@ -17,6 +17,7 @@ from runtime import orgProfiles
 from runtime import timezones as timezoneRuntime
 from runtime import transientNetwork
 from runtime import viewBases as runtimeViewBases
+from runtime.taskSupervisor import cancelTasks
 
 log = logging.getLogger(__name__)
 _userMentionRegex = re.compile(r"^<@!?(\d+)>$")
@@ -195,10 +196,10 @@ class CurfewCog(runtimeCogGuards.InteractionGuardMixin, commands.Cog):
         if self._curfewTask is None or self._curfewTask.done():
             self._curfewTask = asyncio.create_task(self._runCurfewLoop())
 
-    def cog_unload(self) -> None:
-        if self._curfewTask and not self._curfewTask.done():
-            self._curfewTask.cancel()
+    async def cog_unload(self) -> None:
+        task = self._curfewTask
         self._curfewTask = None
+        await cancelTasks(task)
 
     def _curfewOrgKeyForGuild(self, guildId: int) -> str:
         parsedGuildId = int(guildId or 0)

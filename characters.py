@@ -121,6 +121,10 @@ def _canonicalized_words(words: Iterable[str] | None) -> tuple[str, ...]:
     return tuple(normalized)
 
 
+def canonical_alt_word_keys(words: Iterable[str] | None = None) -> set[str]:
+    return set(_canonicalized_words(words))
+
+
 def generate_regex_pattern(word: str) -> str:
     key = normalized_username_key(word)
     pattern = ""
@@ -185,10 +189,30 @@ def username_alt_match_reason(
     *,
     altWords: Iterable[str] | None = None,
 ) -> str | None:
+    return username_alt_match_reason_for_keys(
+        candidate,
+        knownUsername,
+        candidateKey=normalized_username_key(candidate),
+        knownKey=normalized_username_key(knownUsername),
+        altWords=altWords,
+    )
+
+
+def username_alt_match_reason_for_keys(
+    candidate: str,
+    knownUsername: str,
+    *,
+    candidateKey: str,
+    knownKey: str,
+    candidateCanonical: str | None = None,
+    knownCanonical: str | None = None,
+    markerCanonicalWords: set[str] | None = None,
+    altWords: Iterable[str] | None = None,
+) -> str | None:
     candidateText = str(candidate or "").strip()
     knownText = str(knownUsername or "").strip()
-    candidateKey = normalized_username_key(candidateText)
-    knownKey = normalized_username_key(knownText)
+    candidateKey = str(candidateKey or "")
+    knownKey = str(knownKey or "")
     if len(candidateKey) < 3 or len(knownKey) < 3:
         return None
     if candidateText.lower() == knownText.lower():
@@ -200,15 +224,18 @@ def username_alt_match_reason(
     if _has_trailing_digit_variant(candidateKey, knownKey):
         return "known member username with alternate characters"
 
-    candidateCanonical = canonical_username_key(candidateText)
-    knownCanonical = canonical_username_key(knownText)
+    if candidateCanonical is None:
+        candidateCanonical = canonical_username_key(candidateText)
+    if knownCanonical is None:
+        knownCanonical = canonical_username_key(knownText)
     if len(candidateCanonical) < 3 or len(knownCanonical) < 3:
         return None
 
     if candidateCanonical == knownCanonical:
         return "known member username with alternate characters"
 
-    markerCanonicalWords = set(_canonicalized_words(altWords))
+    if markerCanonicalWords is None:
+        markerCanonicalWords = set(_canonicalized_words(altWords))
     if _has_alt_marker_variant(
         candidateKey,
         knownKey,

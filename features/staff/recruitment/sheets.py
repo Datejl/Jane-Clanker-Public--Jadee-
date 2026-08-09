@@ -949,7 +949,6 @@ def _organizeMembersSectionRows(
     usersAndBounds: Optional[tuple[list, int, int]] = None,
 ) -> int:
     usernameCol = header["robloxUsername"]
-    rankCol = header["rsRank"]
     if usersAndBounds is None:
         usersAndBounds = _getMembersSectionBounds(service, usernameCol)
     if not usersAndBounds:
@@ -1082,22 +1081,10 @@ def _findRowByRobloxUsername(service, usernameColumn: str, rankColumn: str, user
 
 
 def _roleRankOrderMap() -> Dict[str, int]:
-    ordered = [str(item).strip() for item in (getattr(config, "recruitmentAllowedRanks", []) or []) if str(item).strip()]
-    if not ordered:
-        ordered = [
-            "Commissioner 1 IC",
-            "Comissioner 1 IC",
-            "Head Recruiter 1 IC",
-            "Head Recruiter 2 IC",
-            "Head Recruiter 3 IC",
-            "Head Recruiter 4 IC",
-            "Recruitment Manager",
-            "Recruitment Supervisor",
-            "Lead Recruiter",
-            "Senior Recruiter",
-            "Recruiter",
-        ]
-    return {_normalize(rank): index for index, rank in enumerate(ordered)}
+    return {
+        _normalize(rank): index
+        for index, rank in enumerate(_configuredRecruitmentRanks())
+    }
 
 
 def _organizeSectionRowsByRankAndUsername(
@@ -1173,10 +1160,7 @@ def _organizeAndFormatMembersSection(
     )
     writableRows = _memberWritableRowNumbers(service, header, startRow, endRow)
     zeroFillStartCol, zeroFillEndCol = _zeroFillColumnRange(header)
-    rowUsernamesMask: list[str] = []
-    writableRowSet = set(writableRows)
-    for rowNumber in range(startRow, endRow + 1):
-        rowUsernamesMask.append("1" if rowNumber in writableRowSet else "")
+    rowUsernamesMask = _rowSelectionMask(startRow, endRow, writableRows)
     zeroFilled = _fillEmptyCellsWithZero(
         service,
         startRow,
@@ -1552,6 +1536,41 @@ def _aggregateApprovedLogUpdates(updates: list[dict]) -> dict[str, dict[str, int
     return aggregate
 
 
+def _loadWritableMembers(
+    service,
+    sheetId: str,
+    header: Dict[str, str],
+) -> list[tuple[int, str]]:
+    usernameCol = header["robloxUsername"]
+    rankCol = header["rsRank"]
+    usernameAndRank = (
+        service.spreadsheets()
+        .values()
+        .batchGet(
+            spreadsheetId=sheetId,
+            ranges=[
+                f"{_sheetName()}!{usernameCol}:{usernameCol}",
+                f"{_sheetName()}!{rankCol}:{rankCol}",
+            ],
+        )
+        .execute()
+        .get("valueRanges", [])
+    )
+    usernames = usernameAndRank[0].get("values", []) if len(usernameAndRank) > 0 else []
+    ranks = usernameAndRank[1].get("values", []) if len(usernameAndRank) > 1 else []
+    members: list[tuple[int, str]] = []
+    totalRows = max(len(usernames), len(ranks))
+    for idx in range(1, totalRows + 1):
+        usernameRow = usernames[idx - 1] if idx - 1 < len(usernames) else []
+        rankRow = ranks[idx - 1] if idx - 1 < len(ranks) else []
+        usernameCell = _cleanRobloxUsername(usernameRow[0]) if usernameRow else ""
+        rankCell = str(rankRow[0]).strip() if rankRow else ""
+        if not _isWritableMemberRow(usernameCell, rankCell):
+            continue
+        members.append((idx, usernameCell))
+    return members
+
+
 def _loadWritableMemberRowsByUsername(service, sheetId: str, header: Dict[str, str]) -> dict[str, int]:
     usernameCol = header["robloxUsername"]
     rankCol = header["rsRank"]
@@ -1562,31 +1581,10 @@ def _loadWritableMemberRowsByUsername(service, sheetId: str, header: Dict[str, s
     if cached and ttlSec > 0 and (now - cached[0]) <= ttlSec:
         return dict(cached[1])
 
-    usernameAndRank = (
-        service.spreadsheets()
-        .values()
-        .batchGet(
-            spreadsheetId=sheetId,
-            ranges=[
-                f"{_sheetName()}!{usernameCol}:{usernameCol}",
-                f"{_sheetName()}!{rankCol}:{rankCol}",
-            ],
-        )
-        .execute()
-        .get("valueRanges", [])
-    )
-    usernames = usernameAndRank[0].get("values", []) if len(usernameAndRank) > 0 else []
-    ranks = usernameAndRank[1].get("values", []) if len(usernameAndRank) > 1 else []
-    rowByUsername: dict[str, int] = {}
-    totalRows = max(len(usernames), len(ranks))
-    for idx in range(1, totalRows + 1):
-        usernameRow = usernames[idx - 1] if idx - 1 < len(usernames) else []
-        rankRow = ranks[idx - 1] if idx - 1 < len(ranks) else []
-        usernameCell = _cleanRobloxUsername(usernameRow[0]) if usernameRow else ""
-        rankCell = str(rankRow[0]).strip() if rankRow else ""
-        if not _isWritableMemberRow(usernameCell, rankCell):
-            continue
-        rowByUsername[_usernameLookupKey(usernameCell)] = idx
+    rowByUsername = {
+        _usernameLookupKey(username): row
+        for row, username in _loadWritableMembers(service, sheetId, header)
+    }
     if ttlSec > 0:
         _rowLookupCache[cacheKey] = (now, dict(rowByUsername))
     return dict(rowByUsername)
@@ -1596,33 +1594,16 @@ def listWritableRobloxUsernames() -> list[str]:
     service = _getService()
     header = _loadHeaderMap(service)
     sheetId = _spreadsheetId()
-    usernameCol = header["robloxUsername"]
-    rankCol = header["rsRank"]
-    usernameAndRank = (
-        service.spreadsheets()
-        .values()
-        .batchGet(
-            spreadsheetId=sheetId,
-            ranges=[
-                f"{_sheetName()}!{usernameCol}:{usernameCol}",
-                f"{_sheetName()}!{rankCol}:{rankCol}",
-            ],
-        )
-        .execute()
-        .get("valueRanges", [])
-    )
-    usernames = usernameAndRank[0].get("values", []) if len(usernameAndRank) > 0 else []
-    ranks = usernameAndRank[1].get("values", []) if len(usernameAndRank) > 1 else []
-    out: list[str] = []
-    totalRows = max(len(usernames), len(ranks))
-    for idx in range(1, totalRows + 1):
-        usernameRow = usernames[idx - 1] if idx - 1 < len(usernames) else []
-        rankRow = ranks[idx - 1] if idx - 1 < len(ranks) else []
-        usernameCell = _cleanRobloxUsername(usernameRow[0]) if usernameRow else ""
-        rankCell = str(rankRow[0]).strip() if rankRow else ""
-        if _isWritableMemberRow(usernameCell, rankCell):
-            out.append(usernameCell)
-    return out
+    return [username for _, username in _loadWritableMembers(service, sheetId, header)]
+
+
+def _rowSelectionMask(
+    startRow: int,
+    endRow: int,
+    selectedRows: list[int],
+) -> list[str]:
+    selected = {int(row) for row in selectedRows if startRow <= int(row) <= endRow}
+    return ["1" if row in selected else "" for row in range(startRow, endRow + 1)]
 
 
 def _resolveApprovedLogRows(
@@ -1631,17 +1612,39 @@ def _resolveApprovedLogRows(
     aggregate: dict[str, dict[str, int | str]],
     rowByUsername: dict[str, int],
 ) -> dict[int, dict[str, int | str]]:
+    missingEntries = [
+        (key, entry)
+        for key, entry in aggregate.items()
+        if not rowByUsername.get(key)
+    ]
+    for _, entry in missingEntries:
+        _insertMissingMemberRow(service, header, str(entry["robloxUsername"]))
+
+    if missingEntries:
+        # Every inserted Sheet row can shift all previously resolved row numbers.
+        # Reload once after all insertions rather than risking updates to the member
+        # who used to occupy a now-stale row.
+        rowByUsername = _loadWritableMemberRowsByUsername(
+            service,
+            _spreadsheetId(),
+            header,
+        )
+
     updatesByRow: dict[int, dict[str, int | str]] = {}
     for key, entry in aggregate.items():
         row = rowByUsername.get(key)
         if not row:
-            row = _insertMissingMemberRow(service, header, str(entry["robloxUsername"]))
-            if not row:
-                continue
-            rowByUsername[key] = row
+            continue
         entry["robloxUsername"] = _cleanRobloxUsername(entry.get("robloxUsername"))
         updatesByRow[row] = entry
     return updatesByRow
+
+
+def _gridCellValue(values: list, rowOffset: int, colOffset: int) -> Any:
+    row = values[rowOffset] if 0 <= rowOffset < len(values) else []
+    if not isinstance(row, list) or colOffset < 0 or colOffset >= len(row):
+        return ""
+    return row[colOffset]
 
 
 def _loadApprovedLogCurrentRows(
@@ -1650,18 +1653,31 @@ def _loadApprovedLogCurrentRows(
     header: Dict[str, str],
     rows: list[int],
 ) -> dict[int, dict[str, str]]:
-    perRowRanges: list[str] = []
-    rangeMeta: list[tuple[int, str]] = []
     keys = ("rsRank", "monthly", "allTime", "patrols", "quota")
-    for row in rows:
-        for key in keys:
-            perRowRanges.append(_range(header[key], row))
-            rangeMeta.append((row, key))
+    columnByKey: dict[str, int] = {}
+    for key in keys:
+        columnIndex = _columnIndex(header[key])
+        if columnIndex <= 0:
+            raise RuntimeError(f"Recruitment sheet header has invalid column for {key}.")
+        columnByKey[key] = columnIndex
+
+    if not rows:
+        return {}
+
+    minColumn = min(columnByKey.values())
+    maxColumn = max(columnByKey.values())
+    startColumn = _indexToColumn(minColumn)
+    endColumn = _indexToColumn(maxColumn)
+    blockRanges: list[str] = []
+    rangeMeta: list[tuple[int, int]] = []
+    for startRow, endRow in _contiguousRanges(rows):
+        blockRanges.append(f"{_sheetName()}!{startColumn}{startRow}:{endColumn}{endRow}")
+        rangeMeta.append((startRow, endRow))
 
     fetchedRanges = (
         service.spreadsheets()
         .values()
-        .batchGet(spreadsheetId=sheetId, ranges=perRowRanges)
+        .batchGet(spreadsheetId=sheetId, ranges=blockRanges)
         .execute()
         .get("valueRanges", [])
     )
@@ -1670,7 +1686,7 @@ def _loadApprovedLogCurrentRows(
         .values()
         .batchGet(
             spreadsheetId=sheetId,
-            ranges=perRowRanges,
+            ranges=blockRanges,
             valueRenderOption="FORMULA",
         )
         .execute()
@@ -1678,19 +1694,19 @@ def _loadApprovedLogCurrentRows(
     )
 
     currentByRow: dict[int, dict[str, str]] = {}
-    for idx, (row, key) in enumerate(rangeMeta):
+    for idx, (startRow, endRow) in enumerate(rangeMeta):
         values = fetchedRanges[idx].get("values", []) if idx < len(fetchedRanges) else []
-        value = values[0][0] if values and values[0] else ""
-        rowData = currentByRow.setdefault(row, {})
-        rowData[key] = str(value)
-        formulaValues = (
-            fetchedFormulaRanges[idx].get("values", [])
-            if idx < len(fetchedFormulaRanges)
-            else []
-        )
-        formulaValue = formulaValues[0][0] if formulaValues and formulaValues[0] else ""
-        if isinstance(formulaValue, str) and formulaValue.strip().startswith("="):
-            rowData[f"{key}Formula"] = formulaValue.strip()
+        formulaValues = fetchedFormulaRanges[idx].get("values", []) if idx < len(fetchedFormulaRanges) else []
+        for row in range(startRow, endRow + 1):
+            rowData = currentByRow.setdefault(row, {})
+            rowOffset = row - startRow
+            for key, columnIndex in columnByKey.items():
+                colOffset = columnIndex - minColumn
+                value = _gridCellValue(values, rowOffset, colOffset)
+                rowData[key] = str(value)
+                formulaValue = _gridCellValue(formulaValues, rowOffset, colOffset)
+                if isinstance(formulaValue, str) and formulaValue.strip().startswith("="):
+                    rowData[f"{key}Formula"] = formulaValue.strip()
     return currentByRow
 
 
@@ -1764,8 +1780,20 @@ def applyApprovedLogsBatch(
     startRow = min(touchedRows)
     endRow = max(touchedRows)
     zeroFillStartCol, zeroFillEndCol = _zeroFillColumnRange(header)
-    _fillEmptyCellsWithZero(service, startRow, endRow, zeroFillStartCol, zeroFillEndCol)
-    _applyRecruitmentRowsFormatting(service, startRow, endRow, sheetId=sheetTabId)
+    touchedRowMask = _rowSelectionMask(startRow, endRow, touchedRows)
+    _fillEmptyCellsWithZero(
+        service,
+        startRow,
+        endRow,
+        zeroFillStartCol,
+        zeroFillEndCol,
+        rowUsernames=touchedRowMask,
+    )
+    _applyRecruitmentRowsFormattingForRowSet(
+        service,
+        touchedRows,
+        sheetId=sheetTabId,
+    )
 
     organized = 0
     if organizeAfter:

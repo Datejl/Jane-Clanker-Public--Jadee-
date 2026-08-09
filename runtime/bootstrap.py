@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import importlib
 from asyncio import AbstractEventLoop
 from datetime import datetime, timezone
 from typing import Any
@@ -12,13 +11,11 @@ import discord
 
 from runtime import backups as runtimeBackups
 from runtime import orgProfiles
+from runtime.optionalImports import importOptionalModule
 
 log = logging.getLogger(__name__)
 
-try:
-    runtimeRestartStatus = importlib.import_module("runtime.restartStatus")
-except ModuleNotFoundError:
-    runtimeRestartStatus = None
+runtimeRestartStatus = importOptionalModule("runtime.restartStatus")
 
 
 class BootstrapCoordinator:
@@ -88,6 +85,48 @@ class BootstrapCoordinator:
         self.botClient.tree.copy_global_to(guild=guild)
         self._guildGlobalCopyPrimedIds.add(guildId)
 
+    async def _createUnknownGuildInvite(self, guild: discord.Guild) -> str:
+        if not bool(getattr(self.config, "unknownGuildInviteCreationEnabled", False)):
+            return ""
+
+        member = getattr(guild, "me", None)
+        if member is None:
+            return ""
+        try:
+            maxAgeSec = int(getattr(self.config, "unknownGuildInviteMaxAgeSec", 300) or 300)
+        except (TypeError, ValueError):
+            maxAgeSec = 300
+        try:
+            maxUses = int(getattr(self.config, "unknownGuildInviteMaxUses", 1) or 1)
+        except (TypeError, ValueError):
+            maxUses = 1
+        maxAgeSec = max(60, min(3600, maxAgeSec))
+        maxUses = max(1, min(10, maxUses))
+
+        for channel in list(getattr(guild, "text_channels", []) or []):
+            try:
+                permissions = channel.permissions_for(member)
+                if not bool(getattr(permissions, "create_instant_invite", False)):
+                    continue
+                invite = await channel.create_invite(
+                    max_age=maxAgeSec,
+                    max_uses=maxUses,
+                    unique=True,
+                    reason="Jane unknown-guild diagnostics (explicitly enabled)",
+                )
+            except (discord.Forbidden, discord.HTTPException):
+                log.warning(
+                    "Could not create the configured diagnostic invite in channel %s for guild %s.",
+                    getattr(channel, "id", "unknown"),
+                    guild.id,
+                    exc_info=True,
+                )
+                continue
+            inviteUrl = str(getattr(invite, "url", "") or "").strip()
+            if inviteUrl:
+                return inviteUrl
+        return ""
+
     async def syncCommandsOnReady(self) -> None:
         if self.readyCommandSyncCompleted:
             return
@@ -120,6 +159,20 @@ class BootstrapCoordinator:
                 guildLabel = f"{guild.name} ({guild.id})"
                 if not self._isGuildAllowedForCommands(int(guild.id)):
                     guildStatuses[guildLabel] = "Skipped - not in allowedCommandGuildIds"
+
+                    try:
+                        inviteUrl = await self._createUnknownGuildInvite(guild)
+                        if inviteUrl:
+                            guildStatuses[guildLabel] = (
+                                "Skipped - not in allowedCommandGuildIds | "
+                                f"Created bounded diagnostic invite: {inviteUrl}"
+                            )
+                    except Exception:
+                        log.exception(
+                            "Guild invite creation attempt failed for guild %s (%s).",
+                            guild.id,
+                            guild.name,
+                        )
                     continue
                 syncedGuild = None
                 lastGuildError: Exception | None = None
@@ -256,7 +309,7 @@ class BootstrapCoordinator:
             log.info("Skipped setup_hook global sync (on_ready handles command sync).")
 
     async def onReady(self) -> None:
-        log.info("Logged in as %s", self.botClient.user)
+        log.info("Discord ready. Logged in as %s", self.botClient.user)
         await self.syncCommandsOnReady()
         if runtimeRestartStatus is not None:
             try:

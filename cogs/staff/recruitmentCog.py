@@ -584,15 +584,18 @@ class RecruitmentCog(commands.Cog):
         user_id="Discord user ID of the user you recruited.",
         image="Primary screenshot proof.",
         extra_image="Second screenshot proof.",
+        third_image="Optional third screenshot proof.",
     )
     @app_commands.rename(user_id="user-id")
     @app_commands.rename(extra_image="extra-image")
+    @app_commands.rename(third_image="third-image")
     async def recruitment(
         self,
         interaction: discord.Interaction,
         user_id: str,
         image: discord.Attachment,
         extra_image: discord.Attachment,
+        third_image: Optional[discord.Attachment] = None,
     ) -> None:
         if not await self._ensureRecruitmentCommandGuild(interaction):
             return
@@ -617,7 +620,7 @@ class RecruitmentCog(commands.Cog):
             )
             return
 
-        attachments = [image, extra_image]
+        attachments = [attachment for attachment in (image, extra_image, third_image) if attachment is not None]
         imageUrls = _evidenceLinks(attachments)
         # Two screenshots are required to reduce ambiguity during review.
         if len(imageUrls) < 2:
@@ -687,8 +690,9 @@ class RecruitmentCog(commands.Cog):
             reviewMessage.id,
             getattr(reviewMessage.channel, "id", None),
         )
-        await interaction.followup.send(
-            "Submitted recruitment log.",
+        await interactionRuntime.safeInteractionReply(
+            interaction,
+            content="Submitted recruitment log.",
             ephemeral=True,
         )
 
@@ -855,15 +859,39 @@ class RecruitmentCog(commands.Cog):
         duration_minutes="Patrol duration in minutes.",
         image="Primary patrol screenshot.",
         extra_image="Second patrol screenshot.",
+        third_image="Optional third patrol screenshot.",
+        fourth_image="Optional fourth patrol screenshot.",
+        fifth_image="Optional fifth patrol screenshot.",
+        sixth_image="Optional sixth patrol screenshot.",
+        seventh_image="Optional seventh patrol screenshot.",
+        eighth_image="Optional eighth patrol screenshot.",
+        ninth_image="Optional ninth patrol screenshot.",
+        tenth_image="Optional tenth patrol screenshot.",
     )
     @app_commands.rename(duration_minutes="duration-minutes")
     @app_commands.rename(extra_image="extra-image")
+    @app_commands.rename(third_image="third-image")
+    @app_commands.rename(fourth_image="fourth-image")
+    @app_commands.rename(fifth_image="fifth-image")
+    @app_commands.rename(sixth_image="sixth-image")
+    @app_commands.rename(seventh_image="seventh-image")
+    @app_commands.rename(eighth_image="eighth-image")
+    @app_commands.rename(ninth_image="ninth-image")
+    @app_commands.rename(tenth_image="tenth-image")
     async def recruitmentTimeLog(
         self,
         interaction: discord.Interaction,
         duration_minutes: int,
         image: discord.Attachment,
         extra_image: discord.Attachment,
+        third_image: Optional[discord.Attachment] = None,
+        fourth_image: Optional[discord.Attachment] = None,
+        fifth_image: Optional[discord.Attachment] = None,
+        sixth_image: Optional[discord.Attachment] = None,
+        seventh_image: Optional[discord.Attachment] = None,
+        eighth_image: Optional[discord.Attachment] = None,
+        ninth_image: Optional[discord.Attachment] = None,
+        tenth_image: Optional[discord.Attachment] = None,
     ) -> None:
         if not await self._ensureRecruitmentCommandGuild(interaction):
             return
@@ -888,7 +916,22 @@ class RecruitmentCog(commands.Cog):
             )
             return
 
-        attachments = [image, extra_image]
+        attachments = [
+            attachment
+            for attachment in (
+                image,
+                extra_image,
+                third_image,
+                fourth_image,
+                fifth_image,
+                sixth_image,
+                seventh_image,
+                eighth_image,
+                ninth_image,
+                tenth_image,
+            )
+            if attachment is not None
+        ]
         imageUrls = _evidenceLinks(attachments)
         if len(imageUrls) < 2:
             await interaction.response.send_message(

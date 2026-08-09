@@ -456,6 +456,30 @@ class MultiOrbatEngine:
             )
         self.batchUpdateValues(sheetKey, updates)
 
+    def writeRowsColumnsBatch(
+            self,
+            sheetKey: str,
+            *,
+            rows: list[int],
+            columnValuesByRow: dict[int, dict[str, tuple[str, Any]]],
+    ) -> None:
+        updates: list[dict[str, Any]] = []
+        sheetName = self.getSheetName(sheetKey)
+        for row, columnValues in columnValuesByRow.items():
+            for payload in columnValues.values():
+                if not isinstance(payload, tuple) or len(payload) != 2:
+                    continue
+                col, rawValue = payload
+                if not col:
+                    continue
+                updates.append(
+                    {
+                        "range": f"{sheetName}!{col}{row}:{col}{row}",
+                        "values": [[rawValue]],
+                    }
+                )
+        self.batchUpdateValues(sheetKey, updates)
+
     def incrementIntCell(self, sheetKey: str, *, row: int, columnLetter: str, delta: int = 1) -> int:
         sheetName = self.getSheetName(sheetKey)
         rangeA1 = f"{sheetName}!{columnLetter}{row}:{columnLetter}{row}"
@@ -472,6 +496,51 @@ class MultiOrbatEngine:
             [{"range": rangeA1, "values": [[nextValue]]}],
         )
         return nextValue
+
+    def _recalculateActualRows(self, actualRows: list[tuple[int, int]], sourceRow: int, targetRow: int) -> None:
+        if sourceRow > targetRow:
+            for key, value in actualRows.items():
+                if targetRow <= value < sourceRow:
+                    actualRows[key] += 1
+                elif value == sourceRow:
+                    actualRows[key] = targetRow
+        elif sourceRow < targetRow:
+            for key, value in actualRows.items():
+                if sourceRow < value <= targetRow:
+                    actualRows[key] -= 1
+                elif value == sourceRow:
+                    actualRows[key] = targetRow
+        
+    def moveRows(self, sheetKey: str, *, moves: list[tuple[int, int]]) -> None:
+        sheet = self.getSheetConfig(sheetKey)
+        tabId = self._getSheetTabId(sheet)
+        requests: list[dict[str, Any]] = []
+        actualRows: dict[int, int] = {}
+        for sourceRow, targetRow in moves:
+            actualRows.setdefault(sourceRow, sourceRow)
+            actualRows.setdefault(targetRow, targetRow)
+        for instruction in moves:
+            originalSource, originalTarget = instruction
+            sourceRow = actualRows[originalSource]
+            targetRow = actualRows[originalTarget]
+            if sourceRow == targetRow:
+                continue
+            
+            requests.append(
+                {
+                   "moveDimension": {
+                        "source": {
+                            "sheetId": tabId,
+                            "dimension": "ROWS",
+                            "startIndex": sourceRow - 1,
+                            "endIndex": sourceRow,
+                        },
+                        "destinationIndex": targetRow,
+                    }
+                }
+            )
+            self._recalculateActualRows(actualRows, sourceRow, targetRow)
+        self.batchUpdateRequests(sheetKey, requests)
 
 
 _engineInstance: Optional[MultiOrbatEngine] = None

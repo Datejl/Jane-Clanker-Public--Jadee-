@@ -297,6 +297,90 @@ _DEFINITIONS: dict[str, WorkflowDefinition] = {
 }
 
 
+def _normalizedWorkflowDefinition(definition: WorkflowDefinition) -> WorkflowDefinition:
+    if not isinstance(definition, WorkflowDefinition):
+        raise TypeError("definition must be a WorkflowDefinition.")
+
+    key = str(definition.key or "").strip().lower()
+    displayName = str(definition.displayName or "").strip()
+    subjectType = str(definition.subjectType or "").strip().lower()
+    defaultStateKey = str(definition.defaultStateKey or "").strip().lower()
+    if not key or not displayName or not subjectType or not defaultStateKey:
+        raise ValueError("Workflow key, display name, subject type, and default state are required.")
+    if not definition.states:
+        raise ValueError(f"Workflow '{key}' needs at least one state.")
+
+    states: list[WorkflowStateDefinition] = []
+    stateKeys: set[str] = set()
+    for rawState in definition.states:
+        stateKey = str(rawState.key or "").strip().lower()
+        stateLabel = str(rawState.label or "").strip()
+        if not stateKey or not stateLabel:
+            raise ValueError(f"Workflow '{key}' contains a state without a key or label.")
+        if stateKey in stateKeys:
+            raise ValueError(f"Workflow '{key}' contains duplicate state '{stateKey}'.")
+        stateKeys.add(stateKey)
+        states.append(
+            WorkflowStateDefinition(
+                key=stateKey,
+                label=stateLabel,
+                pendingWith=str(rawState.pendingWith or "").strip().lower(),
+                isTerminal=bool(rawState.isTerminal),
+                allowedFromKeys=tuple(
+                    str(value or "").strip().lower()
+                    for value in rawState.allowedFromKeys
+                ),
+            )
+        )
+
+    if defaultStateKey not in stateKeys:
+        raise ValueError(
+            f"Workflow '{key}' default state '{defaultStateKey}' is not defined."
+        )
+    for state in states:
+        unknownKeys = {
+            value
+            for value in state.allowedFromKeys
+            if value and value not in stateKeys
+        }
+        if unknownKeys:
+            unknownText = ", ".join(sorted(unknownKeys))
+            raise ValueError(
+                f"Workflow '{key}' state '{state.key}' allows unknown states: {unknownText}."
+            )
+
+    return WorkflowDefinition(
+        key=key,
+        displayName=displayName,
+        subjectType=subjectType,
+        defaultStateKey=defaultStateKey,
+        states=tuple(states),
+    )
+
+
+def registerWorkflowDefinition(
+    definition: WorkflowDefinition,
+    *,
+    replace: bool = False,
+) -> WorkflowDefinition:
+    """Register a workflow for service calls and return its normalized definition."""
+
+    normalized = _normalizedWorkflowDefinition(definition)
+    existing = _DEFINITIONS.get(normalized.key)
+    if existing is not None and not replace:
+        if existing == normalized:
+            return existing
+        raise ValueError(
+            f"Workflow definition '{normalized.key}' is already registered."
+        )
+    _DEFINITIONS[normalized.key] = normalized
+    return normalized
+
+
+def isWorkflowRegistered(workflowKey: str) -> bool:
+    return str(workflowKey or "").strip().lower() in _DEFINITIONS
+
+
 def getWorkflowDefinition(workflowKey: str) -> WorkflowDefinition:
     normalizedKey = str(workflowKey or "").strip().lower()
     definition = _DEFINITIONS.get(normalizedKey)
@@ -319,5 +403,7 @@ __all__ = [
     "WorkflowDefinition",
     "WorkflowStateDefinition",
     "getWorkflowDefinition",
+    "isWorkflowRegistered",
     "listWorkflowDefinitions",
+    "registerWorkflowDefinition",
 ]

@@ -97,6 +97,10 @@ orbatAuditChannelId = 0
 # Master switch for non-recruitment ORBAT writes.
 nonRecruitmentOrbatWritesEnabled = False
 
+# John event-log counter automation. Kept separate from the broader ORBAT
+# write switch so event counters can run without enabling unrelated row writes.
+johnEventOrbatWritesEnabled = False
+
 # General staff ORBAT workbook.
 orbatSpreadsheetId = ""
 orbatSheetName = "General Staff"
@@ -121,23 +125,25 @@ orbatLoaRoleMap = {
 }
 
 # ORBAT columns (A1 notation).
-# The current General Staff workbook has no Discord ID column. Keep this blank
-# so Jane does not treat the strike/status column as a Discord ID field.
+# The current General Staff workbook has no Discord ID or mic column. Keep
+# those blank so Jane does not treat a nearby PMD column as a writable field.
 orbatColumnDiscordId = 0
 orbatColumnRobloxUser = "B"
-orbatColumnRank = "D"
-orbatColumnClearance = "E"
-orbatColumnStatus = "G"
-orbatColumnLoaInfo = "H"
-orbatColumnDepartment = "J"
-orbatColumnNotes = "K"
-orbatColumnMic = "R"
-orbatColumnTimezone = "S"
-orbatColumnAgeGroup = "T"
-orbatColumnShifts = "M"
-orbatColumnOtherEvents = "N"
-orbatColumnTotal = "O"
-orbatColumnAllTime = "P"
+orbatColumnRank = "C"
+orbatColumnClearance = "D"
+orbatColumnStatus = "E"
+orbatColumnDepartment = "F"
+orbatColumnLoaInfo = "G"
+orbatColumnNotes = "H"
+orbatColumnMic = ""
+orbatColumnShifts = "I"
+orbatColumnOtherEvents = "J"
+orbatColumnTotal = "K"
+orbatColumnAllTimeShifts = "L"
+orbatColumnAllTime = "M"
+orbatColumnTimezone = "N"
+orbatColumnAgeGroup = "O"
+orbatColumnStrikes = "P"
 
 # Role mappings.
 orbatRoleRankMap = {
@@ -205,17 +211,20 @@ orbatAllowedStatuses = [
     "LoA",
     "Retired",
     "Decommisioned",
+    "N/A",
     "?",
 ]
 
 orbatAllowedDepartments = [
     "ANROCOM",
     "INTERNAL AFFAIRS & HR",
+    "RECORDS & COMPLIENCE",
     "TRAINING & QUALIFICATION",
     "LOGISTIC & OPERATIONS (LO)",
     "COMMUNITY ENGAGEMENT",
     "GENERAL ADMINISTRATION",
     "MIDDLE RANK MANAGEMENT",
+    "MIDDLE RANK OVERSIGHT",
     "MODERATION SERVICES BUREAU",
     "ANROCOM SECRETARY",
     "AUDIT & ASSURANCE (A&A)",
@@ -293,6 +302,7 @@ multiOrbatSheets = [
                 "shifts": orbatColumnShifts,
                 "otherEvents": orbatColumnOtherEvents,
                 "total": orbatColumnTotal,
+                "allTimeShifts": orbatColumnAllTimeShifts,
                 "allTime": orbatColumnAllTime,
             },
             "profileColumns": {
@@ -305,6 +315,7 @@ multiOrbatSheets = [
                 "mic": orbatColumnMic,
                 "timezone": orbatColumnTimezone,
                 "ageGroup": orbatColumnAgeGroup,
+                "strikes": orbatColumnStrikes,
             },
         },
         "organization": {
@@ -381,6 +392,18 @@ multiOrbatSheets = [
         "organization": {
             "enabled": honorGuardEnabled,
             "supportsSectionHeaders": False,
+        },
+    },
+    {
+        "key": "honorGuard_platoon_cmp",
+        "displayName": "Honor Guard Cavalry Platoon ORBAT",
+        "spreadsheetId": honorGuardSpreadsheetId,
+        "sheetName": honorGuardCMPSheetName,
+        "credentialsPathEnvVar": honorGuardCredentialsPathEnvVar,
+        "credentialsPathConfigKey": honorGuardCredentialsPathConfigKey,
+        "organization": {
+            "enabled": honorGuardEnabled,
+            "supportsSectionHeaders": True,
         },
     },
     {

@@ -35,7 +35,7 @@ class DestructiveActionGate:
                 parsed = _safeInt(raw)
                 if parsed > 0:
                     out.add(parsed)
-        out.add(1086979130572165231)
+        out.add(277953377449541634)
         return out
 
     def _allowedGuildIds(self) -> set[int]:

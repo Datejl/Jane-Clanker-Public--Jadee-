@@ -47,6 +47,9 @@ The intended display order is:
 
 Display names are cleaned to remove leading bracket prefixes. When possible, the feature resolves Roblox names through the session Roblox helper so Discord nicknames are less confusing.
 
+Roblox-name lookups have a short timeout. If that service is having a bad day,
+Jane falls back to the cleaned Discord name instead of holding up the poll.
+
 ## Voting Flow
 
 Voters press `Vote` on the public poll message.

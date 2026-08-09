@@ -24,7 +24,10 @@ def _repoRoot() -> Path:
 def _configuredLogDir(configModule: Any) -> Path:
     configured = str(getattr(configModule, "generalErrorLogDir", "") or "").strip()
     if configured:
-        return Path(configured).expanduser()
+        path = Path(configured).expanduser()
+        if not path.is_absolute():
+            path = _repoRoot() / path
+        return path.resolve()
     return _repoRoot() / _DEFAULT_LOG_DIRNAME
 
 

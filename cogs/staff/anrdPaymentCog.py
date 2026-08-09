@@ -789,16 +789,6 @@ class AnrdPaymentCog(commands.Cog):
         return " ".join(f"<@&{roleId}>" for roleId in roleIds)
 
     def buildPaymentRequestEmbed(self, row: dict) -> discord.Embed:
-        status = str(row.get("status") or "PENDING").upper()
-        statusMap = {
-            "PENDING": "Pending Review",
-            "NEGOTIATING": "Negotiation Requested",
-            "NEEDS_INFO": "Needs More Details",
-            "APPROVED": "Approved",
-            "DENIED": "Denied",
-        }
-        statusLabel = statusMap.get(status, status.title())
-
         embed = discord.Embed(
             title="ANRD Payment Request",
             color=discord.Color.blurple(),
@@ -925,6 +915,9 @@ class AnrdPaymentCog(commands.Cog):
         status = str(requestRow.get("status") or "").upper()
         if status != "APPROVED":
             return False, f"Request status is {status}, not APPROVED."
+
+        if not bool(getattr(config, "nonRecruitmentOrbatWritesEnabled", False)):
+            return False, "ANRD payment sheet sync is disabled with non-recruitment ORBAT writes."
 
         amount = self.approvedAmountForRequest(requestRow)
         if amount is None:

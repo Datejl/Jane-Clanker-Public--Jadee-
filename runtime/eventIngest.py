@@ -9,6 +9,23 @@ import discord
 import config
 
 _hostMentionRegex = re.compile(r"<@!?(\d+)>")
+_trainingEventTitleRegex = re.compile(
+    r"\b(?:"
+    r"training|trainings|train|trained|"
+    r"exam|exams|examination|examinations|"
+    r"orientation|orientations|"
+    r"cert|certs|certification|certifications|"
+    r"qualification|qualifications|tqual|"
+    r"lecture|lectures|class|classes"
+    r")\b",
+    re.IGNORECASE,
+)
+_tqualEventTitleRegex = re.compile(
+    r"\b(?:"
+    r"grid|emergency|turbine|solo|supervisor"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -69,12 +86,32 @@ def _extractEventType(message: discord.Message) -> str:
     return ""
 
 
+def classifyJohnEventCategory(eventTypeRaw: str) -> str | None:
+    title = str(eventTypeRaw or "").strip()
+    if not title:
+        return None
+
+    normalizedTitle = title.casefold()
+    if "recruit" in normalizedTitle:
+        return None
+    if "shift" in normalizedTitle:
+        return "shift"
+    if _trainingEventTitleRegex.search(title):
+        return None
+    if _tqualEventTitleRegex.search(title):
+        return None
+    return "other"
+
+
 class JohnEventLogAdapter:
     name = "john.eventLog"
 
+    def __init__(self, *, configModule=config) -> None:
+        self.config = configModule
+
     async def tryParse(self, message: discord.Message) -> Optional[IngestEvent]:
-        johnBotId = getattr(config, "johnClankerBotId", None)
-        eventLogChannelId = getattr(config, "johnEventLogChannelId", None)
+        johnBotId = getattr(self.config, "johnClankerBotId", None)
+        eventLogChannelId = getattr(self.config, "johnEventLogChannelId", None)
         if not johnBotId or not eventLogChannelId:
             return None
         if message.author.id != int(johnBotId):
@@ -85,14 +122,12 @@ class JohnEventLogAdapter:
         content = message.content or ""
         if not content.strip():
             return None
-        if "recruit" in content.lower():
-            return None
 
         hostId = _extractHostId(message)
         eventTypeRaw = _extractEventType(message)
-        eventType = eventTypeRaw.lower()
-        isShift = "shift" in eventType or "shit" in eventType
-        eventCategory = "shift" if isShift else "other"
+        eventCategory = classifyJohnEventCategory(eventTypeRaw)
+        if eventCategory is None:
+            return None
 
         return IngestEvent(
             source=self.name,

@@ -23,6 +23,7 @@ from features.community.info import (
     pruneOldSnapshots,
 )
 from runtime import interaction as interactionRuntime
+from runtime.taskSupervisor import cancelTasks
 from runtime import webhooks as webhookRuntime
 
 log = logging.getLogger(__name__)
@@ -37,10 +38,10 @@ class InfoCog(commands.Cog):
         if self._snapshotTask is None or self._snapshotTask.done():
             self._snapshotTask = asyncio.create_task(self._runSnapshotLoop())
 
-    def cog_unload(self) -> None:
-        if self._snapshotTask is not None and not self._snapshotTask.done():
-            self._snapshotTask.cancel()
+    async def cog_unload(self) -> None:
+        task = self._snapshotTask
         self._snapshotTask = None
+        await cancelTasks(task)
 
     async def _safeEphemeral(self, interaction: discord.Interaction, content: str) -> None:
         await interactionRuntime.safeInteractionReply(interaction, content=content, ephemeral=True)

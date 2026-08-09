@@ -113,7 +113,6 @@ def slashPermissionHint(path: str) -> str:
     cohostRoles = runtimePermissions.normalizeRoleIds(getattr(config, "cohostAllowedRoleIds", []))
     appAdminRoles = runtimePermissions.normalizeRoleIds(getattr(config, "divisionApplicationsAdminRoleIds", []))
     appGlobalReviewerRoles = runtimePermissions.normalizeRoleIds(getattr(config, "divisionApplicationsGlobalReviewerRoleIds", []))
-    ribbonManagerRoles = runtimePermissions.normalizeRoleIds(getattr(config, "ribbonManagerRoleIds", []))
     anrdSubmitterRoles = runtimePermissions.normalizeRoleIds(getattr(config, "anrdPaymentSubmitterRoleIds", []))
     divisionClockinRoles = runtimePermissions.normalizeRoleIds(getattr(config, "divisionClockinAllowedRoleIds", []))
     orbatSubmitterRoles = runtimePermissions.normalizeRoleIds(getattr(config, "orbatSubmitterRoleIds", []))
@@ -124,7 +123,6 @@ def slashPermissionHint(path: str) -> str:
     projectHodRoles = runtimePermissions.normalizeRoleIds(getattr(config, "projectHodRoleIds", []))
     projectAssistantDirectorRoles = runtimePermissions.normalizeRoleIds(getattr(config, "projectAssistantDirectorRoleIds", []))
     bestOfCommandRoles = runtimePermissions.normalizeRoleIds(getattr(config, "bestOfCommandRoleIds", []))
-    allowPublicOrbatLookup = bool(getattr(config, "allowPublicOrbatLookup", False))
 
     applicationPanelRoles = list(appAdminRoles)
     for roleId in appGlobalReviewerRoles:

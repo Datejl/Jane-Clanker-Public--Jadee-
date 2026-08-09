@@ -17,6 +17,7 @@ from features.staff.sessions.Roblox import robloxUsers
 from runtime import interaction as interactionRuntime
 from runtime import permissions as runtimePermissions
 from runtime import viewBases as runtimeViewBases
+from runtime.taskSupervisor import cancelTasks
 
 # Behold the sacred fallback recipient.
 # Keeper of last-resort Best Of scrolls.
@@ -713,10 +714,10 @@ class BestOfCog(commands.Cog):
         if self._finalizeTask is None or self._finalizeTask.done():
             self._finalizeTask = asyncio.create_task(self._runBestOfFinalizeLoop())
 
-    def cog_unload(self) -> None:
-        if self._finalizeTask and not self._finalizeTask.done():
-            self._finalizeTask.cancel()
+    async def cog_unload(self) -> None:
+        task = self._finalizeTask
         self._finalizeTask = None
+        await cancelTasks(task)
 
     async def _safeEphemeral(self, interaction: discord.Interaction, message: str) -> None:
         await interactionRuntime.safeInteractionReply(
@@ -803,10 +804,16 @@ class BestOfCog(commands.Cog):
         if not candidateMembersByUserId:
             return out
 
+        lookupEnabled = bool(getattr(config, "bestOfRobloxLookupEnabled", True))
         lookupConcurrency = max(
             1,
-            min(20, int(getattr(config, "recruitmentRoverLookupConcurrency", 8) or 8)),
+            min(20, int(getattr(config, "bestOfRobloxLookupConcurrency", 8) or 8)),
         )
+        try:
+            lookupTimeoutSec = float(getattr(config, "bestOfRobloxLookupTimeoutSec", 3.0) or 3.0)
+        except (TypeError, ValueError):
+            lookupTimeoutSec = 3.0
+        lookupTimeoutSec = max(0.25, min(10.0, lookupTimeoutSec))
         semaphore = asyncio.Semaphore(lookupConcurrency)
 
         async def _resolve(member: discord.Member) -> None:
@@ -814,14 +821,30 @@ class BestOfCog(commands.Cog):
                 str(member.display_name or member.name or f"User {member.id}")
             )
             resolvedName = fallbackName
-            try:
-                async with semaphore:
-                    lookup = await robloxUsers.fetchRobloxUser(int(member.id), guildId=int(guild.id))
-                robloxUsername = str(lookup.robloxUsername or "").strip()
-                if robloxUsername:
-                    resolvedName = robloxUsername
-            except Exception:
-                log.exception("Best Of RoVer lookup failed for userId=%d", int(member.id))
+            if lookupEnabled:
+                try:
+                    async with semaphore:
+                        lookup = await asyncio.wait_for(
+                            robloxUsers.fetchRobloxUser(
+                                int(member.id),
+                                guildId=int(guild.id),
+                            ),
+                            timeout=lookupTimeoutSec,
+                        )
+                    robloxUsername = str(lookup.robloxUsername or "").strip()
+                    if robloxUsername:
+                        resolvedName = robloxUsername
+                except TimeoutError:
+                    log.info(
+                        "Best Of Roblox lookup timed out after %.2fs for userId=%d; using Discord name.",
+                        lookupTimeoutSec,
+                        int(member.id),
+                    )
+                except Exception:
+                    log.exception(
+                        "Best Of Roblox lookup failed for userId=%d; using Discord name.",
+                        int(member.id),
+                    )
             out[int(member.id)] = resolvedName
 
         await asyncio.gather(*(_resolve(member) for member in candidateMembersByUserId.values()))

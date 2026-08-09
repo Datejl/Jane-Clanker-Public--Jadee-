@@ -2,6 +2,8 @@
 
 This is the practical setup path for a new Windows dev machine. It is intentionally boring, because new-machine setup should not be a rite of passage.
 
+The production Linux host has its own shorter path in [Deployment](deployment.md).
+
 Use repo-relative commands from the Jane project folder.
 
 ## Prerequisites
@@ -50,6 +52,12 @@ Run:
 ```powershell
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+For development and test work, install the additional local tooling with:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 ```
 
 ## Running Jane

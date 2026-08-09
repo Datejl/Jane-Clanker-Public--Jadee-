@@ -3,7 +3,6 @@ import logging
 import os
 import sys
 import traceback
-from asyncio import AbstractEventLoop
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -47,7 +46,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
-from db.sqlite import closeDb, execute, fetchOne, initDb
+from db.sqlite import closeDb, initDb
 from features.staff.recruitment import (
     service as recruitmentService,
     sheets as recruitmentSheets,
@@ -70,13 +69,14 @@ from runtime import (
     errorLogging as runtimeErrorLogging,
     errors as runtimeErrors,
     eventLoopWatchdog as runtimeEventLoopWatchdog,
-    eventIngest as runtimeEventIngest,
     featureFlags as runtimeFeatureFlags,
     gamblingApi as runtimeGamblingApi,
     helpCommands as runtimeHelpCommands,
     interaction as interactionRuntime,
     janeIdentityWeb as runtimeJaneIdentityWeb,
+    johnEventRuntime as runtimeJohnEventRuntime,
     maintenance as runtimeMaintenance,
+    messageRouting as runtimeMessageRouting,
     metricsExport as runtimeMetricsExport,
     orgFeatureGate as runtimeOrgFeatureGate,
     orbatAudit as runtimeOrbatAudit,
@@ -86,9 +86,13 @@ from runtime import (
     pluginRegistry as runtimePluginRegistry,
     processResources as runtimeProcessResources,
     retryQueue as runtimeRetryQueue,
+    shutdown as runtimeShutdown,
     singleInstance as runtimeSingleInstance,
     taskBudgeter,
+    taskStats as runtimeTaskStats,
+    taskSupervisor as runtimeTaskSupervisor,
     textCommands as runtimeTextCommands,
+    trainingLogRuntime as runtimeTrainingLogRuntime,
     webhookHealth as runtimeWebhookHealth,
     webhooks as runtimeWebhooks,
 )
@@ -136,7 +140,7 @@ _runtimeControlAllowedWhilePaused = {
 }
 _runtimePausedMessage = "Jane is currently paused. Use /pause again to resume actions."
 _serverNotRecognizedMessage = (
-    "Server not recognized. Please reach out to a_very_tired_potato for assistance."
+    "Server not recognized. Please reach out to @AlexYikes for assistance."
 )
 _organizationFeatureUnavailableMessage = "This feature is not enabled for this organization."
 _temporaryLockMessage = "Commands are temporarily restricted to specific staff during rollout."
@@ -148,12 +152,10 @@ _allowedCommandGuildIds = {
 _activeAppCommandInvocations: dict[tuple[int, str], datetime] = {}
 _activeInvocationTtlSec = 600
 _roleOrbatSyncLastRunByUser: dict[int, datetime] = {}
-_eventDispatcher = runtimeEventIngest.EventIngestDispatcher(
-    [runtimeEventIngest.JohnEventLogAdapter()]
-)
 _featureFlags = runtimeFeatureFlags.FeatureFlagService(configModule=config)
 _pluginRegistry = runtimePluginRegistry.PluginRegistry()
 _pauseController = runtimePauseState.PauseController()
+_runtimeTaskSupervisor = runtimeTaskSupervisor.TaskSupervisor()
 _singleInstanceLock = runtimeSingleInstance.SingleInstanceLock(
     Path(__file__).resolve().parent / "logs" / "jane-runtime.lock"
 )
@@ -189,6 +191,7 @@ _gitUpdateCoordinator = (
     else None
 )
 _textCommandRouter: runtimeTextCommands.TextCommandRouter | None = None
+_humanMessageRouter: runtimeMessageRouting.HumanMessageRouter | None = None
 _maintenanceCoordinator = runtimeMaintenance.MaintenanceCoordinator(
     botClient=botClient,
     configModule=config,
@@ -226,9 +229,6 @@ _errorCoordinator = runtimeErrors.ErrorCoordinator(
 _metricsExporter: runtimeMetricsExport.MetricsExporter | None = None
 _gamblingApiServer: runtimeGamblingApi.GamblingApiServer | None = None
 _janeIdentityWebServer: runtimeJaneIdentityWeb.JaneIdentityWebServer | None = None
-_trainingLogSyncTask: asyncio.Task | None = None
-_trainingLogCaptureTasks: dict[int, asyncio.Task] = {}
-_botProfileBioTask: asyncio.Task | None = None
 _botProfileBioStarted = False
 
 
@@ -269,96 +269,29 @@ _trainingLogCoordinator = trainingLogService.TrainingLogCoordinator(
     recruitmentService=recruitmentService,
     webhookModule=runtimeWebhooks,
 )
-
-
-async def _runTrainingLogStartupSync() -> None:
-    await botClient.wait_until_ready()
-    delaySec = max(0.0, float(getattr(config, "trainingLogStartupSyncDelaySec", 90) or 0))
-    if delaySec > 0:
-        await asyncio.sleep(delaySec)
-    await taskBudgeter.runLowPriorityDiscord(
-        lambda: _trainingLogCoordinator.ensureSummaryPanelAtBottom()
-    )
-    maxAttempts = 3
-    retryDelaySec = 30
-    for attempt in range(1, maxAttempts + 1):
-        logging.info(
-            "Training log startup sync attempt %s/%s beginning.",
-            attempt,
-            maxAttempts,
-        )
-        await taskBudgeter.runLowPriorityDiscord(
-            lambda: _trainingLogCoordinator.syncRecentMessages()
-        )
-        if getattr(_trainingLogCoordinator, "_lastReadySyncAt", None) is not None:
-            logging.info("Training log startup sync completed.")
-            return
-        if attempt < maxAttempts:
-            logging.warning(
-                "Training log startup sync did not complete on attempt %s/%s. Retrying in %ss.",
-                attempt,
-                maxAttempts,
-                retryDelaySec,
-            )
-            await asyncio.sleep(retryDelaySec)
-    logging.warning("Training log startup sync gave up after %s attempt(s).", maxAttempts)
-
-
-def _startTrainingLogSyncTask() -> None:
-    global _trainingLogSyncTask
-    if _trainingLogSyncTask is not None and not _trainingLogSyncTask.done():
-        return
-    task = asyncio.create_task(
-        _runTrainingLogStartupSync(),
-        name="training-log-backfill",
-    )
-    _trainingLogSyncTask = task
-
-    def _doneCallback(doneTask: asyncio.Task) -> None:
-        try:
-            doneTask.result()
-        except asyncio.CancelledError:
-            logging.info("Training log backfill task was cancelled.")
-        except Exception:
-            logging.exception("Training log backfill task crashed.")
-
-    task.add_done_callback(_doneCallback)
-
-
-def _scheduleTrainingLogCapture(message: discord.Message) -> None:
-    if not _trainingLogCoordinator.shouldInspectSourceMessage(message):
-        return
-    try:
-        messageId = int(getattr(message, "id", 0) or 0)
-    except (TypeError, ValueError):
-        messageId = 0
-    if messageId <= 0:
-        return
-
-    async def _runner() -> None:
-        try:
-            await taskBudgeter.runBackground(lambda: _trainingLogCoordinator.handleSourceMessage(message))
-        except Exception:
-            logging.exception("Training log capture failed for message %s.", messageId)
-        finally:
-            current = _trainingLogCaptureTasks.get(messageId)
-            if current is asyncio.current_task():
-                _trainingLogCaptureTasks.pop(messageId, None)
-
-    _trainingLogCaptureTasks[messageId] = asyncio.create_task(
-        _runner(),
-        name=f"training-log-capture-{messageId}",
-    )
+_trainingLogRuntime = runtimeTrainingLogRuntime.TrainingLogRuntime(
+    botClient=botClient,
+    configModule=config,
+    taskBudgeter=taskBudgeter,
+    coordinator=_trainingLogCoordinator,
+)
+_johnEventCoordinator = runtimeJohnEventRuntime.JohnEventCoordinator(
+    botClient=botClient,
+    configModule=config,
+    taskBudgeter=taskBudgeter,
+    orbatSheets=orbatSheets,
+    robloxUsersModule=robloxUsers,
+    orbatAuditRuntime=runtimeOrbatAudit,
+    privateExtensionsEnabled=_privateServices.privateExtensionsEnabled,
+)
 
 
 def _startBotProfileBioTask() -> None:
-    global _botProfileBioTask, _botProfileBioStarted
+    global _botProfileBioStarted
     if _botProfileBioStarted:
         return
-    if _botProfileBioTask is not None and not _botProfileBioTask.done():
-        return
     _botProfileBioStarted = True
-    task = asyncio.create_task(
+    _runtimeTaskSupervisor.create(
         taskBudgeter.runLowPriorityDiscord(
             lambda: runtimeBotProfile.updateJaneBioOnStartup(
                 botClient=botClient,
@@ -369,17 +302,6 @@ def _startBotProfileBioTask() -> None:
         ),
         name="jane-profile-bio-update",
     )
-    _botProfileBioTask = task
-
-    def _doneCallback(doneTask: asyncio.Task) -> None:
-        try:
-            doneTask.result()
-        except asyncio.CancelledError:
-            logging.info("Jane profile bio update task was cancelled.")
-        except Exception:
-            logging.exception("Jane profile bio update task crashed.")
-
-    task.add_done_callback(_doneCallback)
 
 
 def _orbatWeeklyScheduleConfig() -> tuple[int, int, int]:
@@ -746,67 +668,32 @@ def _getTextCommandRouter() -> runtimeTextCommands.TextCommandRouter:
         )
     return _textCommandRouter
 
-async def _handleUsernameToUserId(message: discord.Message) -> bool:
-    return await _getTextCommandRouter().handleUsernameToUserId(message)
 
-async def _handleChannelPurge(message: discord.Message) -> bool:
-    return await _getTextCommandRouter().handleChannelPurge(message)
-
-async def _handleJaneHelp(message: discord.Message) -> bool:
-    return await _getTextCommandRouter().handleJaneHelp(message)
-
-
-async def _handleJaneRuntime(message: discord.Message) -> bool:
-    return await _getTextCommandRouter().handleJaneRuntime(message)
-
-
-async def _handleJaneTerminal(message: discord.Message) -> bool:
-    return await _getTextCommandRouter().handleJaneTerminal(message)
-
-
-async def _handleShutdownCommand(message: discord.Message) -> bool:
-    return await _getTextCommandRouter().handleShutdown(message)
-
-
-async def _handleAllowServerCommand(message: discord.Message) -> bool:
-    return await _getTextCommandRouter().handleAllowServer(message)
-
-
-async def _handleMirrorTrainingHistoryCommand(message: discord.Message) -> bool:
-    return await _getTextCommandRouter().handleMirrorTrainingHistory(message)
-
-
-async def _handleCopyServerCommand(message: discord.Message) -> bool:
-    return await _getTextCommandRouter().handleCopyServer(message)
-
-
-async def _handleViewAllChannelsCommand(message: discord.Message) -> bool:
-    return await _getTextCommandRouter().handleViewAllChannels(message)
-
-
-async def _handleBgCheckCommand(message: discord.Message) -> bool:
-    return await _getTextCommandRouter().handleBgCheckCommand(message)
-
-
-async def _handleBgLeaderboardCommand(message: discord.Message) -> bool:
-    return await _getTextCommandRouter().handleBgLeaderboardCommand(message)
-
-
-async def _handleJaneFlagSyncCommand(message: discord.Message) -> bool:
-    return await _getTextCommandRouter().handleJaneFlagSync(message)
-
-
-async def _handlePermissionSimulatorCommand(message: discord.Message) -> bool:
-    return await _getTextCommandRouter().handlePermissionSimulatorCommand(message)
-
-
-async def _handlePairDbNamesCommand(message: discord.Message) -> bool:
-    return await _getTextCommandRouter().handlePairDbNamesCommand(message)
-
-
-async def _handleTrainingStatsCommand(message: discord.Message) -> bool:
-    return await _trainingLogCoordinator.handleTrainingStats(message)
-
+def _getHumanMessageRouter() -> runtimeMessageRouting.HumanMessageRouter:
+    global _humanMessageRouter
+    if _humanMessageRouter is None:
+        _humanMessageRouter = runtimeMessageRouting.HumanMessageRouter(
+            botClient=botClient,
+            configModule=config,
+            pauseController=_pauseController,
+            orgFeatureGateModule=runtimeOrgFeatureGate,
+            sillyCommandsModule=sillyCommands,
+            textCommandRouterProvider=_getTextCommandRouter,
+            trainingStatsHandler=_trainingLogCoordinator.handleTrainingStats,
+            hasCohostPermission=_hasCohostPermission,
+            isCommandExecutionAllowed=_isCommandExecutionAllowed,
+            isGuildAllowedForCommands=_isGuildAllowedForCommands,
+            mirrorUnapprovedGuildCommandAttempt=_mirrorUnapprovedGuildCommandAttempt,
+            manualTextCommandTokens=_manualTextCommandTokens,
+            lockedPrefixCommandTokens=_lockedPrefixCommandTokens,
+            messages=runtimeMessageRouting.MessageRoutingMessages(
+                runtimePaused=_runtimePausedMessage,
+                serverNotRecognized=_serverNotRecognizedMessage,
+                organizationFeatureUnavailable=_organizationFeatureUnavailableMessage,
+                temporaryLock=_temporaryLockMessage,
+            ),
+        )
+    return _humanMessageRouter
 
 async def _retryErrorMirrorDmHandler(payload: dict) -> None:
     targetUserId = int(payload.get("targetUserId") or 0)
@@ -850,6 +737,7 @@ async def setup_hook() -> None:
         "auditStream": _auditStream,
         "metricsExporter": _metricsExporter,
         "webhookHealthWatcher": _webhookHealthWatcher,
+        "johnEventCoordinator": _johnEventCoordinator,
         "janeIdentityWebServer": _janeIdentityWebServer,
         "gitUpdateCoordinator": _gitUpdateCoordinator,
         "generalErrorLogPath": runtimeErrorLogging.currentProcessLogSummary(configModule=config),
@@ -867,7 +755,7 @@ async def setup_hook() -> None:
     await _janeIdentityWebServer.start()
     if _gitUpdateCoordinator is not None:
         _gitUpdateCoordinator.start()
-    _startTrainingLogSyncTask()
+    _trainingLogRuntime.start()
 
 
 @botClient.event
@@ -876,7 +764,8 @@ async def on_ready() -> None:
     await _bootstrapCoordinator.onReady()
     logging.info("on_ready reached; ensuring training log startup sync task is running.")
     _startBotProfileBioTask()
-    _startTrainingLogSyncTask()
+    _trainingLogRuntime.start()
+    _johnEventCoordinator.start()
 
 
 @botClient.check
@@ -884,14 +773,15 @@ async def prefixCommandSafetyCheck(ctx: commands.Context) -> bool:
     guildId = int(getattr(getattr(ctx, "guild", None), "id", 0) or 0)
     if not _isGuildAllowedForCommands(guildId):
         if guildId > 0:
-            asyncio.create_task(
+            _runtimeTaskSupervisor.create(
                 _mirrorUnapprovedGuildCommandAttempt(
                     commandName=str(getattr(getattr(ctx, "command", None), "qualified_name", "unknown")),
                     userLabel=str(getattr(ctx, "author", "Unknown User")),
                     userId=int(getattr(getattr(ctx, "author", None), "id", 0) or 0),
                     guildName=str(getattr(getattr(ctx, "guild", None), "name", "Unknown Server")),
                     guildId=guildId,
-                )
+                ),
+                name=f"prefix-guild-lock-alert:{guildId}",
             )
         try:
             await ctx.reply(
@@ -933,14 +823,15 @@ async def interactionSafetyCheck(interaction: discord.Interaction) -> bool:
     guildId = int(getattr(getattr(interaction, "guild", None), "id", 0) or 0)
     if not _isGuildAllowedForCommands(guildId):
         if guildId > 0:
-            asyncio.create_task(
+            _runtimeTaskSupervisor.create(
                 _mirrorUnapprovedGuildCommandAttempt(
                     commandName=_interactionCommandName(interaction),
                     userLabel=str(getattr(interaction, "user", "Unknown User")),
                     userId=int(getattr(getattr(interaction, "user", None), "id", 0) or 0),
                     guildName=str(getattr(getattr(interaction, "guild", None), "name", "Unknown Server")),
                     guildId=guildId,
-                )
+                ),
+                name=f"interaction-guild-lock-alert:{guildId}",
             )
         await _safeInteractionSend(
             interaction,
@@ -1004,7 +895,7 @@ async def interactionSafetyCheck(interaction: discord.Interaction) -> bool:
         return False
     _activeAppCommandInvocations[key] = datetime.now(timezone.utc)
     if isinstance(interaction.user, discord.Member):
-        asyncio.create_task(
+        _runtimeTaskSupervisor.create(
             _scheduleRoleBasedOrbatSync(interaction.user, interaction.guild.id),
             name=f"role-orbat-sync:{interaction.user.id}",
         )
@@ -1057,33 +948,31 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError) 
     await _errorCoordinator.handlePrefixCommandError(ctx=ctx, error=error)
 
 
-_runtimeCleanupStarted = False
+_runtimeCleanup = runtimeShutdown.OnceAsyncCleanup(taskName="jane-runtime-cleanup")
 _originalBotClientClose = botClient.close
 
 
-async def _cleanupRuntimeServices() -> None:
-    global _runtimeCleanupStarted
-    if _runtimeCleanupStarted:
-        return
-    _runtimeCleanupStarted = True
-
+async def _runRuntimeCleanupServices() -> None:
     async def _runCleanupStep(label: str, awaitableFactory) -> None:
         try:
             await awaitableFactory()
         except Exception:
             logging.exception("Runtime cleanup step failed: %s", label)
 
-    try:
-        _maintenanceCoordinator.cancelBackgroundTasks()
-    except Exception:
-        logging.exception("Runtime cleanup step failed: maintenance tasks")
+    await _runCleanupStep("maintenance tasks", _maintenanceCoordinator.stopBackgroundTasks)
     await _runCleanupStep("event loop watchdog", _eventLoopWatchdog.stop)
     if _gitUpdateCoordinator is not None:
         await _runCleanupStep("git updater", _gitUpdateCoordinator.stop)
     await _runCleanupStep("webhook health watcher", _webhookHealthWatcher.stop)
     await _runCleanupStep("retry queue", _retryQueue.stop)
+    await _runCleanupStep("feature flag refreshes", _featureFlags.stop)
     await _runCleanupStep("Jane Identity web callback", _janeIdentityWebServer.stop)
     await _runCleanupStep("gambling API", _gamblingApiServer.stop)
+    await _runCleanupStep("John event backfill", _johnEventCoordinator.stop)
+    await _runCleanupStep("training log tasks", _trainingLogRuntime.stop)
+    if _humanMessageRouter is not None:
+        await _runCleanupStep("human message routing tasks", _humanMessageRouter.stop)
+    await _runCleanupStep("supervised runtime tasks", _runtimeTaskSupervisor.stop)
     await _runCleanupStep("Roblox HTTP session", robloxTransport.closeHttpSession)
     if bool(getattr(config, "dbRuntimeSnapshotOnShutdown", True)):
         async def _captureDbShutdownSnapshot() -> None:
@@ -1102,7 +991,12 @@ async def _cleanupRuntimeServices() -> None:
             )
 
         await _runCleanupStep("runtime DB snapshot", _captureDbShutdownSnapshot)
+    await _runCleanupStep("runtime task stats", runtimeTaskStats.shutdown)
     await _runCleanupStep("SQLite connection", closeDb)
+
+
+async def _cleanupRuntimeServices() -> None:
+    await _runtimeCleanup.run(_runRuntimeCleanupServices)
 
 
 async def _closeBotClientWithCleanup() -> None:
@@ -1117,218 +1011,16 @@ botClient.close = _closeBotClientWithCleanup  # type: ignore[method-assign]
 async def on_close() -> None:
     await _cleanupRuntimeServices()
 
-async def _alreadyProcessedJohnLog(messageId: int) -> bool:
-    row = await fetchOne(
-        "SELECT messageId FROM john_event_log_messages WHERE messageId = ?",
-        (messageId,),
-    )
-    return row is not None
-
-async def _markProcessedJohnLog(message: discord.Message, hostId: int | None, category: str) -> None:
-    await execute(
-        """
-        INSERT OR IGNORE INTO john_event_log_messages
-        (messageId, channelId, hostId, eventCategory)
-        VALUES (?, ?, ?, ?)
-        """,
-        (message.id, message.channel.id, hostId, category),
-    )
-
-
-async def _handleIngestedEvent(
-    message: discord.Message,
-    event: runtimeEventIngest.IngestEvent,
-) -> None:
-    if event.eventType != "john.orbatIncrement":
-        return
-
-    if await _alreadyProcessedJohnLog(event.messageId):
-        return
-
-    if not _nonRecruitmentOrbatWritesEnabled():
-        return
-
-    hostId = int(event.hostId or 0)
-    if hostId <= 0:
-        logging.warning("John log message %s missing host mention.", message.id)
-        return
-
-    category = str(event.payload.get("eventCategory") or "other").strip().lower()
-    columnKey = "shifts" if category == "shift" else "otherEvents"
-
-    row = await taskBudgeter.runSheetsThread(orbatSheets.incrementEventCount, hostId, columnKey, 1)
-    if row == 0:
-        lookup = await robloxUsers.fetchRobloxUser(hostId)
-        if lookup.robloxUsername:
-            row = await taskBudgeter.runSheetsThread(
-                orbatSheets.incrementEventCount,
-                hostId,
-                columnKey,
-                1,
-                robloxUser=lookup.robloxUsername,
-            )
-
-    if row == 0:
-        logging.warning("ORBAT row not found for host %s in John log %s.", hostId, message.id)
-        return
-
-    try:
-        await runtimeOrbatAudit.sendOrbatChangeLog(
-            botClient,
-            title="Spreadsheet Change",
-            change="Incremented ORBAT event counter from John event log.",
-            requestedBy=f"<@{hostId}>",
-            authorizedBy="John event log",
-            requestMessageUrl=message.jump_url,
-            details=(
-                f"Category: {category if category in {'shift', 'other'} else 'other'} | "
-                f"Column: {columnKey} | "
-                f"Row: {int(row)}"
-            ),
-            sheetKey="generalStaff",
-        )
-    except Exception:
-        logging.exception(
-            "Failed to post ORBAT increment audit log for John message %s.",
-            message.id,
-        )
-
-    await _markProcessedJohnLog(message, hostId, category if category in {"shift", "other"} else "other")
-
-
-def _firstLowerToken(content: str) -> str:
-    return _getTextCommandRouter().firstLowerToken(content)
-
-async def _processCommands(message: discord.Message) -> None:
-    await botClient.process_commands(message)
-
-
 @botClient.event
 async def on_message(message: discord.Message) -> None:
-    _scheduleTrainingLogCapture(message)
+    _trainingLogRuntime.scheduleCapture(message)
     if not message.author.bot:
-        _getTextCommandRouter().noteCopyServerWarningMessage(message)
-    if _pauseController.isPaused():
-        if not message.author.bot:
-            token = _firstLowerToken(message.content or "")
-            guildId = int(getattr(getattr(message, "guild", None), "id", 0) or 0)
-            orgFeatureEnabled, orgFeatureKey = runtimeOrgFeatureGate.isTokenEnabledForGuild(config, guildId, token)
-            if not orgFeatureEnabled:
-                try:
-                    await message.channel.send(f"{_organizationFeatureUnavailableMessage} (`{orgFeatureKey}`)")
-                except Exception:
-                    pass
-                return
-            if token == "!allowserver":
-                if await _handleAllowServerCommand(message):
-                    return
-            if token == "!copyserver":
-                if await _handleCopyServerCommand(message):
-                    return
-            if token == "!shutdown":
-                if await _handleShutdownCommand(message):
-                    return
-            if token == "!mirrortraininghistory":
-                if await _handleMirrorTrainingHistoryCommand(message):
-                    return
-            if token == "!janeterminal":
-                if await _handleJaneTerminal(message):
-                    return
-            if token in _manualTextCommandTokens or token in _lockedPrefixCommandTokens:
-                try:
-                    await message.channel.send(_runtimePausedMessage)
-                except Exception:
-                    pass
-                return
-            ctx = await botClient.get_context(message)
-            if ctx.command is not None:
-                try:
-                    await message.channel.send(_runtimePausedMessage)
-                except Exception:
-                    pass
-                return
+        await _getHumanMessageRouter().handle(message)
         return
-    if not message.author.bot:
-        token = _firstLowerToken(message.content or "")
-        guildId = int(getattr(getattr(message, "guild", None), "id", 0) or 0)
-        orgFeatureEnabled, orgFeatureKey = runtimeOrgFeatureGate.isTokenEnabledForGuild(config, guildId, token)
-        if not orgFeatureEnabled:
-            try:
-                await message.channel.send(f"{_organizationFeatureUnavailableMessage} (`{orgFeatureKey}`)")
-            except Exception:
-                pass
-            return
-        if await _handleAllowServerCommand(message):
-            return
-        if await _handleMirrorTrainingHistoryCommand(message):
-            return
-        if token in _manualTextCommandTokens:
-            if not _isGuildAllowedForCommands(guildId):
-                if guildId > 0:
-                    asyncio.create_task(
-                        _mirrorUnapprovedGuildCommandAttempt(
-                            commandName=token,
-                            userLabel=str(message.author),
-                            userId=int(message.author.id),
-                            guildName=str(getattr(message.guild, "name", "Unknown Server")),
-                            guildId=guildId,
-                        )
-                    )
-                try:
-                    await message.channel.send(_serverNotRecognizedMessage)
-                except Exception:
-                    pass
-                return
-        await sillyCommands.maybeHandleSillyMentions(message, botClient)
-        if await _handleJaneHelp(message):
-            return
-        if await _handleViewAllChannelsCommand(message):
-            return
-        if not _isCommandExecutionAllowed(int(message.author.id)):
-            if token in _lockedPrefixCommandTokens:
-                await message.channel.send(_temporaryLockMessage)
-                return
-            return await _processCommands(message)
-        if await sillyCommands.maybeHandleSixtySevenSpam(message):
-            return
-        if await sillyCommands.handleSkinCommand(
-            message,
-            botClient,
-            hasSkinPermission=_hasCohostPermission,
-        ):
-            return
-        if await sillyCommands.handleKillCommand(message, botClient):
-            return
-        if await sillyCommands.handleCasinoToggleCommand(message):
-            return
-        if await _handleUsernameToUserId(message):
-            return
-        if await _handleChannelPurge(message):
-            return
-        if await _handlePairDbNamesCommand(message):
-            return
-        if await _handleTrainingStatsCommand(message):
-            return
-        if await _handleJaneTerminal(message):
-            return
-        if await _handleShutdownCommand(message):
-            return
-        if await _handleCopyServerCommand(message):
-            return
-        if await _handleJaneRuntime(message):
-            return
-        if await _handleBgLeaderboardCommand(message):
-            return
-        if await _handleJaneFlagSyncCommand(message):
-            return
-        if await _handlePermissionSimulatorCommand(message):
-            return
-        return await _processCommands(message)
-
-    parsedEvents = await _eventDispatcher.parse(message)
+    parsedEvents = await _johnEventCoordinator.parse(message)
     for event in parsedEvents:
         try:
-            await _handleIngestedEvent(message, event)
+            await _johnEventCoordinator.handleIngestedEvent(message, event)
         except Exception:
             logging.exception(
                 "Event ingest handler failed (source=%s type=%s message=%s).",
@@ -1336,14 +1028,14 @@ async def on_message(message: discord.Message) -> None:
                 event.eventType,
                 message.id,
             )
-    return await _processCommands(message)
+    return await botClient.process_commands(message)
 
 
 @botClient.event
 async def on_message_edit(before: discord.Message, after: discord.Message) -> None:
     if int(getattr(before, "id", 0) or 0) != int(getattr(after, "id", 0) or 0):
         return
-    _scheduleTrainingLogCapture(after)
+    _trainingLogRuntime.scheduleCapture(after)
 
 @botClient.listen("on_interaction")
 async def handleRobloxRetry(interaction: discord.Interaction) -> None:

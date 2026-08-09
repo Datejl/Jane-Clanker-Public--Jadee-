@@ -16,6 +16,7 @@ from features.community.events import service as eventService
 from runtime import interaction as interactionRuntime
 from runtime import permissions as runtimePermissions
 from runtime import timezones as timezoneRuntime
+from runtime.taskSupervisor import cancelTasks
 
 
 log = logging.getLogger(__name__)
@@ -406,10 +407,10 @@ class EventCog(commands.Cog):
         if self._reminderTask is None or self._reminderTask.done():
             self._reminderTask = asyncio.create_task(self._runEventReminderLoop())
 
-    def cog_unload(self) -> None:
-        if self._reminderTask and not self._reminderTask.done():
-            self._reminderTask.cancel()
+    async def cog_unload(self) -> None:
+        task = self._reminderTask
         self._reminderTask = None
+        await cancelTasks(task)
 
     def _getEventLock(self, eventId: int) -> asyncio.Lock:
         lock = self._eventLocks.get(int(eventId))

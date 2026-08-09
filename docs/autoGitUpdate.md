@@ -37,7 +37,7 @@ The updater exists so the production bot can pull safe code updates without tram
   Pause drain time before pulling.
 
 - `JANE_INSTALL_REQUIREMENTS_ON_UPDATE`
-  Defaults to off unless enabled in the environment. When a pulled update changes `requirements.txt`, Jane runs `python -m pip install --disable-pip-version-check --break-system-packages -r requirements.txt` with the same Python executable that is running the bot before she requests the restart.
+  Defaults to off unless enabled in the environment. When a pulled update changes `requirements.txt`, Jane runs pip with the same Python executable that is already running the bot before she requests the restart. Venvs get a normal install. An externally managed Linux Python gets `--break-system-packages` only when its marker says that is needed.
 
 - `autoGitUpdateDependencyInstallTimeoutSec`
   Dependency install timeout in seconds. Defaults to 600.

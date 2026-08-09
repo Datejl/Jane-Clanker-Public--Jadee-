@@ -12,10 +12,15 @@ import config
 
 log = logging.getLogger(__name__)
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
 
 def _statsPath() -> Path:
     rawPath = str(getattr(config, "runtimeTaskStatsPath", "runtime/data/task-stats.json") or "").strip()
-    return Path(rawPath or "runtime/data/task-stats.json")
+    path = Path(rawPath or "runtime/data/task-stats.json").expanduser()
+    if path.is_absolute():
+        return path.resolve()
+    return (_REPO_ROOT / path).resolve()
 
 
 def _flushIntervalSec() -> float:
@@ -112,7 +117,6 @@ class _TaskStatsStore:
             return
 
         shouldFlushNow = False
-        shouldScheduleFlush = False
         async with self._lock:
             await self._ensureLoadedLocked()
             row = self._entries.get(normalizedName)
@@ -131,16 +135,24 @@ class _TaskStatsStore:
                 self._dirtyCount >= _flushDirtyCount()
                 or now - self._lastFlushMonotonic >= _flushIntervalSec()
             )
-            shouldScheduleFlush = self._flushTask is None or self._flushTask.done()
+            if not shouldFlushNow and (
+                self._flushTask is None or self._flushTask.done()
+            ):
+                self._flushTask = asyncio.create_task(
+                    self._delayedFlush(),
+                    name="runtime-task-stats-flush",
+                )
 
         if shouldFlushNow:
             await self.flush()
-        elif shouldScheduleFlush:
-            self._flushTask = asyncio.create_task(self._delayedFlush())
 
     async def _delayedFlush(self) -> None:
-        await asyncio.sleep(_flushIntervalSec())
-        await self.flush()
+        try:
+            await asyncio.sleep(_flushIntervalSec())
+            await self.flush()
+        finally:
+            if self._flushTask is asyncio.current_task():
+                self._flushTask = None
 
     async def flush(self) -> None:
         async with self._lock:
@@ -162,6 +174,17 @@ class _TaskStatsStore:
             await asyncio.to_thread(self._writeSync, entries)
         except Exception:
             log.warning("Could not write runtime task stats.", exc_info=True)
+            async with self._lock:
+                self._dirtyCount = max(1, self._dirtyCount)
+
+    async def shutdown(self) -> None:
+        flushTask = self._flushTask
+        self._flushTask = None
+        if flushTask is not None and not flushTask.done():
+            flushTask.cancel()
+        if flushTask is not None:
+            await asyncio.gather(flushTask, return_exceptions=True)
+        await self.flush()
 
     async def snapshot(self) -> list[dict[str, float | int | str]]:
         async with self._lock:
@@ -185,6 +208,10 @@ async def record(name: object, elapsedMs: float) -> None:
 
 async def flush() -> None:
     await _store.flush()
+
+
+async def shutdown() -> None:
+    await _store.shutdown()
 
 
 async def snapshot() -> list[dict[str, float | int | str]]:

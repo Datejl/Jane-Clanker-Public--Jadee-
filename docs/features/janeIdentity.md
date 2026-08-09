@@ -29,6 +29,9 @@ Optional:
 - `JANE_IDENTITY_WEB_PORT=8791`
 - `JANE_IDENTITY_REDIRECT_URI=https://your-public-host/identity/roblox/callback`
 - `JANE_IDENTITY_API_TOKEN=...`
+- `JANE_IDENTITY_RELAY_ENABLED=true`
+- `JANE_IDENTITY_RELAY_API_BASE_URL=https://your-public-host`
+- `JANE_IDENTITY_RELAY_API_TOKEN=...`
 
 The Roblox OAuth app redirect URI must match Jane's redirect URI exactly. By default that is:
 
@@ -40,12 +43,59 @@ Jane also serves the public pages Roblox asks for during OAuth app setup:
 - Privacy Terms URL: `{JANE_IDENTITY_PUBLIC_BASE_URL}/privacy`
 - Terms of Service URL: `{JANE_IDENTITY_PUBLIC_BASE_URL}/terms`
 
+## Plesk Website Relay
+
+If Jane cannot receive public web traffic directly, use the PHP relay in:
+
+`web/jane-identity-relay/`
+
+The production MEMORIAS website repo already contains its own integrated version under `identity/`. Use that version when deploying MEMORIAS; Jane's bundled folder is the small standalone/reference copy.
+
+Upload that folder's contents to the Plesk site's document root so the site owns:
+
+- `/identity/`
+- `/identity/privacy.php`
+- `/identity/terms.php`
+- `/identity/roblox/callback/`
+- `/identity/api/pending.php`
+- `/identity/api/ack.php`
+
+The website stores pending Roblox callback payloads. Jane polls the website, exchanges the Roblox code from the VPS, applies the Discord updates, and then acknowledges the relay row.
+
+For this mode:
+
+- set `JANE_IDENTITY_WEB_ENABLED=false`
+- set `JANE_IDENTITY_RELAY_ENABLED=true`
+- set `JANE_IDENTITY_PUBLIC_BASE_URL=https://your-public-host`
+- set `JANE_IDENTITY_REDIRECT_URI=https://your-public-host/identity/roblox/callback/`
+- set `JANE_IDENTITY_RELAY_API_TOKEN` to the same relay token in the website `identity/config.php`
+- set `ROBLOX_OAUTH_CLIENT_ID` and `ROBLOX_OAUTH_CLIENT_SECRET`
+
+The relay does not need the Roblox client secret. It only needs the shared relay token so Jane can read and acknowledge pending callbacks.
+
+On MEMORIAS, keep the relay SQLite `storage_path` outside the public document root. The repo's `identity/config.example.php` uses the normal Plesk `<domain>/private/` folder. The exact callback route is `/identity/roblox/callback/`; the old `.php` form is kept only as a compatibility route.
+
+For the Roblox OAuth app in Plesk relay mode:
+
+- Entry URL: `https://your-public-host/identity/`
+- Privacy URL: `https://your-public-host/identity/privacy.php`
+- Terms URL: `https://your-public-host/identity/terms.php`
+- Redirect URI: `https://your-public-host/identity/roblox/callback/`
+
 ## Guided Tunnel Setup
 
 For production without buying a domain, use Tailscale Funnel. The Jane host needs Tailscale installed, logged in, and allowed to use Funnel in the tailnet. When the helper runs on the Jane host, it can detect the host's public Tailscale HTTPS URL automatically:
 
+Windows PowerShell:
+
 ```powershell
 .\.venv\Scripts\python.exe tools\setup_jane_identity_tunnel.py
+```
+
+Linux:
+
+```bash
+./.venv/bin/python tools/setup_jane_identity_tunnel.py
 ```
 
 If auto-detection fails, pass the URL manually:
@@ -54,12 +104,16 @@ If auto-detection fails, pass the URL manually:
 .\.venv\Scripts\python.exe tools\setup_jane_identity_tunnel.py --domain https://your-jane-host.your-tailnet.ts.net
 ```
 
+```bash
+./.venv/bin/python tools/setup_jane_identity_tunnel.py --domain https://your-jane-host.your-tailnet.ts.net
+```
+
 The helper:
 
 - updates `localOnly/credentials/jane-runtime-secrets.env`
 - generates `JANE_IDENTITY_API_TOKEN` if one does not exist
 - writes `localOnly/identity/john-identity.env` for the future John handoff
-- writes `localOnly/tailscale/run-jane-identity-funnel.ps1`
+- writes a native runner: `run-jane-identity-funnel.ps1` on Windows or `run-jane-identity-funnel.sh` on Linux
 - prints the Tailscale Funnel command and Roblox redirect URI
 
 The generated Tailscale Funnel command points the public HTTPS URL at Jane's local callback server:
@@ -88,6 +142,10 @@ Cloudflare is still supported if a real domain is added later:
 
 ```powershell
 .\.venv\Scripts\python.exe tools\setup_jane_identity_tunnel.py --domain identity.example.com --tunnel-provider cloudflare
+```
+
+```bash
+./.venv/bin/python tools/setup_jane_identity_tunnel.py --domain identity.example.com --tunnel-provider cloudflare
 ```
 
 Use `--prompt-roblox` if you want the helper to ask for missing Roblox OAuth client credentials. The Roblox app redirect URI must be exactly the redirect URI printed by the helper.

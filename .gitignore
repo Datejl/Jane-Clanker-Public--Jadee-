@@ -10,7 +10,6 @@ __pycache__/
 .coverage.*
 coverage.xml
 htmlcov/
-tests/
 
 # === Virtual Environments ===
 .python/
@@ -42,6 +41,8 @@ Thumbs.db
 logs/
 localOnly/
 scripts/
+backups/serverSnapshots/*.json
+backups/serverSnapshotsOffsite/*.json
 bot.db
 bot.db-shm
 bot.db-wal
@@ -71,6 +72,10 @@ jane-clanker-*.json
 client_secret_*.json
 google-oauth-token*.json
 oauth-token*.json
+
+# === Website Relay Local State ===
+web/jane-identity-relay/config.php
+web/jane-identity-relay/identity-relay-data/*.jsonl
 
 # === Large Local Artifacts ===
 *.mp4

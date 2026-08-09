@@ -35,6 +35,8 @@ The normal flow is:
 
 Backfill uses the same capture path, but defers summary refresh until each org scan finishes.
 
+Each captured row also gets a `training_result_export_state` row. That state caches the host Roblox identity and marks whether the row is ready for the future training-results sheet export.
+
 ## Message Parsing
 
 The parser supports:
@@ -59,6 +61,7 @@ Most channel IDs are read through `runtime/orgProfiles.py`:
 - `trainingResultsChannelId`
 - `trainingArchiveChannelId`
 - `trainingLogBackfillDays`
+- `trainingLogStartupMirrorNewRows`
 - `trainingSummaryWebhookName`
 - `trainingMirrorWebhookName`
 
@@ -82,4 +85,5 @@ Each org gets its own derived key.
 - Do not change parser titles casually. The accepted strings are effectively a data contract with posted training result messages.
 - Mirrored messages are matched by stored message IDs and by footer recovery. Keep the `Source message ID` footer stable unless you migrate old mirrors.
 - Backfill can scan a lot of Discord history. Keep the cooldown and locks in mind.
+- Restart backfill may mirror recent missing rows only after it builds the archive index. If the index read fails, it stores rows but avoids creating mirror messages.
 - `?trainingstats` matches hosts by mention, ID, and normalized display labels. Name matching can be fuzzy, so avoid making it more aggressive without checking false positives.

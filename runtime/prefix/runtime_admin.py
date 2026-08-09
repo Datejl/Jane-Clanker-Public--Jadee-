@@ -183,6 +183,7 @@ async def handleJaneRuntime(router: Any, message: discord.Message) -> bool:
         value=(
             f"queueDepth: `{int(budgetTotals.get('waiting', 0))}`\n"
             f"pendingTasks: `{int(budgetTotals.get('pending', 0)) + pendingBackgroundTasks}`\n"
+            f"failed: `{int(budgetTotals.get('failed', 0))}` | canceled: `{int(budgetTotals.get('canceled', 0))}`\n"
             f"avgOpLatency: `{float(budgetTotals.get('avgLatencyMs', 0.0)):.2f} ms`"
         ),
         inline=False,
@@ -196,6 +197,8 @@ async def handleJaneRuntime(router: Any, message: discord.Message) -> bool:
             lines.append(
                 f"{featureName}: q={int(stats.get('waiting', 0))} "
                 f"in={int(stats.get('inFlight', 0))} "
+                f"fail={int(stats.get('failed', 0))} "
+                f"can={int(stats.get('canceled', 0))} "
                 f"lat={float(stats.get('avgLatencyMs', 0.0)):.1f}ms"
             )
         if lines:

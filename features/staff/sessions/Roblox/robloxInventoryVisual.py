@@ -12,7 +12,6 @@ _extractCreatorId = robloxPayloads.extractCreatorId
 _extractCreatorName = robloxPayloads.extractCreatorName
 _optionalInt = robloxPayloads.optionalInt
 fetchRobloxAssetThumbnailHashes = robloxAssets.fetchRobloxAssetThumbnailHashes
-_imageHashDistance = robloxAssets.imageHashDistance
 _colorSignatureDistance = robloxAssets.colorSignatureDistance
 _visualSignatureDetailCompatible = robloxAssets.visualSignatureDetailCompatible
 _inventoryMatchPriority = robloxInventoryText.inventoryMatchPriority
@@ -81,6 +80,22 @@ def _inventoryVisualHashSize() -> int:
     except (TypeError, ValueError):
         configured = 16
     return max(4, min(configured, 16))
+
+
+def _parseImageHashInts(hashes: Optional[dict[int, str]]) -> dict[int, int]:
+    parsed: dict[int, int] = {}
+    for assetId, hashValue in dict(hashes or {}).items():
+        parsedAssetId = _optionalInt(assetId)
+        if parsedAssetId is None or int(parsedAssetId) <= 0:
+            continue
+        text = str(hashValue or "").strip()
+        if not text:
+            continue
+        try:
+            parsed[int(parsedAssetId)] = int(text, 16)
+        except ValueError:
+            continue
+    return parsed
 
 _INVENTORY_VISUAL_TYPE_MARKERS = (
     "accessory",
@@ -517,6 +532,22 @@ async def _applyInventoryVisualMatches(
             "error": "; ".join(combinedErrors[:3]) or None,
         }
 
+    normalizedReferenceHashInts = _parseImageHashInts(normalizedReferenceHashes)
+    candidateHashInts = _parseImageHashInts(candidateHashes)
+    if not normalizedReferenceHashInts or not candidateHashInts:
+        combinedErrors = [value for value in (referenceError, referenceCategoryError, candidateError) if value]
+        return {
+            "candidateCount": len(candidates),
+            "comparedCandidateCount": len(comparableCandidates),
+            "referenceCount": len(referenceIds),
+            "matchedCount": 0,
+            "skippedTypeMismatchCount": skippedTypeMismatchCount,
+            "skippedUnknownTypeCount": skippedUnknownTypeCount,
+            "skippedColorMismatchCount": 0,
+            "skippedDetailMismatchCount": 0,
+            "error": "; ".join(combinedErrors[:3]) or None,
+        }
+
     distanceMax = _inventoryVisualHashDistanceMax()
     colorMatchingEnabled = _inventoryVisualColorMatchingEnabled()
     colorDistanceMax = _inventoryVisualColorDistanceMax()
@@ -531,8 +562,8 @@ async def _applyInventoryVisualMatches(
         if not candidateCategory:
             skippedUnknownTypeCount += 1
             continue
-        candidateHash = candidateHashes.get(assetId)
-        if not candidateHash:
+        candidateHashInt = candidateHashInts.get(assetId)
+        if candidateHashInt is None:
             continue
         bestReferenceId = 0
         bestDistance: Optional[int] = None
@@ -540,11 +571,11 @@ async def _applyInventoryVisualMatches(
         for referenceId in candidateReferenceIds.get(assetId, []):
             if int(referenceId) == assetId and assetId in exactReferenceItemIds:
                 continue
-            referenceHash = normalizedReferenceHashes.get(int(referenceId))
-            if not referenceHash:
+            referenceHashInt = normalizedReferenceHashInts.get(int(referenceId))
+            if referenceHashInt is None:
                 continue
-            distance = _imageHashDistance(candidateHash, referenceHash)
-            if distance is None or distance > distanceMax:
+            distance = (candidateHashInt ^ referenceHashInt).bit_count()
+            if distance > distanceMax:
                 continue
             colorDistance: Optional[float] = None
             if colorMatchingEnabled:

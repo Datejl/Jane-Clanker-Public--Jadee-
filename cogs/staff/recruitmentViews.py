@@ -3,7 +3,7 @@
 import asyncio
 import json
 import logging
-from typing import Optional, Sequence
+from typing import TYPE_CHECKING, Optional, Sequence
 
 import discord
 
@@ -14,6 +14,9 @@ from features.staff.recruitment import service as recruitmentService
 from runtime import interaction as interactionRuntime
 from runtime import normalization
 from runtime import permissions as runtimePermissions
+
+if TYPE_CHECKING:
+    from cogs.staff.recruitmentCog import RecruitmentCog
 
 
 log = logging.getLogger(__name__)

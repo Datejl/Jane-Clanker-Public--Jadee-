@@ -25,6 +25,7 @@ from features.community.polls import (
 )
 from runtime import interaction as interactionRuntime
 from runtime import permissions as runtimePermissions
+from runtime.taskSupervisor import cancelTasks
 
 log = logging.getLogger(__name__)
 
@@ -51,10 +52,10 @@ class PollCog(commands.Cog):
         if self._closeTask is None or self._closeTask.done():
             self._closeTask = asyncio.create_task(self._runPollCloseLoop())
 
-    def cog_unload(self) -> None:
-        if self._closeTask is not None and not self._closeTask.done():
-            self._closeTask.cancel()
+    async def cog_unload(self) -> None:
+        task = self._closeTask
         self._closeTask = None
+        await cancelTasks(task)
 
     async def _safeEphemeral(self, interaction: discord.Interaction, content: str) -> None:
         await interactionRuntime.safeInteractionReply(interaction, content=content, ephemeral=True)

@@ -1,17 +1,13 @@
 ﻿from __future__ import annotations
 
-import importlib
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from runtime.optionalImports import importOptionalModule
+
 
 def _tryImportModule(moduleName: str, *, enabled: bool = True) -> Any | None:
-    if not enabled:
-        return None
-    try:
-        return importlib.import_module(moduleName)
-    except ModuleNotFoundError:
-        return None
+    return importOptionalModule(moduleName, enabled=enabled)
 
 
 class _DepartmentOrbatSheetsFallback:

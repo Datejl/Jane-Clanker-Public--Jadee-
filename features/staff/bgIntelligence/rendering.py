@@ -263,14 +263,43 @@ def _groupLine(group: dict[str, Any]) -> str:
     return f"{groupName} [{groupId}]{roleText}{detailText}"
 
 
+def _inventoryFlagContext(item: dict[str, Any]) -> dict[str, Any]:
+    referenceItemId = item.get("referenceItemId")
+    referenceName = (
+        str(item.get("referenceItemName") or "").strip()
+        or str(item.get("referenceName") or "").strip()
+        or (f"item {referenceItemId}" if referenceItemId else "")
+    )
+    return {
+        "matchType": str(item.get("matchType") or "").strip().lower(),
+        "matchMode": str(item.get("matchMode") or "").strip().lower(),
+        "keyword": str(item.get("keyword") or "").strip(),
+        "referenceItemId": referenceItemId,
+        "referenceName": referenceName,
+    }
+
+
+def _inventoryFuzzyScoreLabel(value: Any) -> str:
+    try:
+        return f"{float(value):.0f}"
+    except (TypeError, ValueError):
+        return "?"
+
+
+def _inventoryExtraSignalCount(item: dict[str, Any]) -> int:
+    try:
+        return max(0, int(item.get("matchCount") or 0) - 1)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _itemLine(item: dict[str, Any]) -> str:
     itemName = item.get("name") or "Unknown item"
     itemId = item.get("id") or "?"
     itemType = str(item.get("itemType") or "").strip()
     creatorId = item.get("creatorId")
     creatorName = item.get("creatorName")
-    matchType = str(item.get("matchType") or "").strip().lower()
-    matchMode = str(item.get("matchMode") or "").strip().lower()
+    context = _inventoryFlagContext(item)
     creatorText = ""
     if creatorName or creatorId:
         creatorLabel = creatorName or "creator"
@@ -278,31 +307,27 @@ def _itemLine(item: dict[str, Any]) -> str:
     detailParts: list[str] = []
     if itemType:
         detailParts.append(itemType)
-    if matchType == "item":
+    if context["matchType"] == "item":
         detailParts.append("exact item")
-    elif matchType == "creator":
+    elif context["matchType"] == "creator":
         detailParts.append("flagged creator")
-    elif matchType == "visual":
-        referenceItemId = item.get("referenceItemId")
+    elif context["matchType"] == "visual":
+        referenceItemId = context["referenceItemId"]
         visualDistance = item.get("visualDistance")
         if referenceItemId:
             detailParts.append(f"visual match to {referenceItemId} (d={visualDistance if visualDistance is not None else '?'})")
         else:
             detailParts.append("visual match")
-    elif matchType == "keyword" and item.get("keyword"):
-        keyword = str(item.get("keyword") or "").strip()
-        if matchMode == "fuzzy":
-            fuzzyScore = item.get("fuzzyScore")
-            try:
-                fuzzyLabel = f"{float(fuzzyScore):.0f}"
-            except (TypeError, ValueError):
-                fuzzyLabel = "?"
+    elif context["matchType"] == "keyword" and context["keyword"]:
+        keyword = context["keyword"]
+        if context["matchMode"] == "fuzzy":
+            fuzzyLabel = _inventoryFuzzyScoreLabel(item.get("fuzzyScore"))
             detailParts.append(f"fuzzy keyword {fuzzyLabel}: {keyword}")
-        elif matchMode == "normalized":
+        elif context["matchMode"] == "normalized":
             detailParts.append(f"normalized keyword: {keyword}")
         else:
             detailParts.append(f"keyword: {keyword}")
-    extraSignals = max(0, int(item.get("matchCount") or 0) - 1)
+    extraSignals = _inventoryExtraSignalCount(item)
     if extraSignals > 0:
         detailParts.append(f"+{extraSignals} more signal(s)")
     suffix = f" | {', '.join(detailParts)}" if detailParts else ""
@@ -310,10 +335,11 @@ def _itemLine(item: dict[str, Any]) -> str:
 
 
 def _inventoryFlagReason(item: dict[str, Any]) -> str:
-    matchType = str(item.get("matchType") or "").strip().lower()
-    matchMode = str(item.get("matchMode") or "").strip().lower()
-    keyword = str(item.get("keyword") or "").strip()
-    referenceItemId = item.get("referenceItemId")
+    context = _inventoryFlagContext(item)
+    matchType = context["matchType"]
+    matchMode = context["matchMode"]
+    keyword = context["keyword"]
+    referenceItemId = context["referenceItemId"]
     if matchType == "visual":
         if referenceItemId:
             return f"thumbnail similarity to {_robloxCatalogLink(referenceItemId, f'item {referenceItemId}')}"
@@ -321,11 +347,7 @@ def _inventoryFlagReason(item: dict[str, Any]) -> str:
     if matchType == "keyword":
         if keyword:
             if matchMode == "fuzzy":
-                try:
-                    fuzzyScore = f"{float(item.get('fuzzyScore')):.0f}"
-                except (TypeError, ValueError):
-                    fuzzyScore = "?"
-                return f"item name looked similar to keyword `{keyword}` ({fuzzyScore})"
+                return f"item name looked similar to keyword `{keyword}` ({_inventoryFuzzyScoreLabel(item.get('fuzzyScore'))})"
             if matchMode == "normalized":
                 return f"item name normalized to keyword `{keyword}`"
             return f"item name matched keyword `{keyword}`"
@@ -342,16 +364,13 @@ def _inventoryFlagReason(item: dict[str, Any]) -> str:
 
 
 def _inventoryFlagSummaryReason(item: dict[str, Any]) -> str:
-    matchType = str(item.get("matchType") or "").strip().lower()
-    matchMode = str(item.get("matchMode") or "").strip().lower()
-    keyword = str(item.get("keyword") or "").strip()
+    context = _inventoryFlagContext(item)
+    matchType = context["matchType"]
+    matchMode = context["matchMode"]
+    keyword = context["keyword"]
     if matchType == "visual":
-        referenceItemId = item.get("referenceItemId")
-        referenceName = (
-            str(item.get("referenceItemName") or "").strip()
-            or str(item.get("referenceName") or "").strip()
-            or (f"item {referenceItemId}" if referenceItemId else "")
-        )
+        referenceItemId = context["referenceItemId"]
+        referenceName = context["referenceName"]
         if referenceItemId:
             return f"similar to {_robloxCatalogLink(referenceItemId, referenceName or f'item {referenceItemId}')}"
         return "similar to a previously flagged item"
@@ -381,7 +400,7 @@ def _inventoryFlagSummaryLine(item: dict[str, Any]) -> str:
     itemId = item.get("id") or "?"
     itemLink = _robloxCatalogLink(itemId, itemName)
     reason = _inventoryFlagSummaryReason(item)
-    extraSignals = max(0, int(item.get("matchCount") or 0) - 1)
+    extraSignals = _inventoryExtraSignalCount(item)
     extraText = f" (+{extraSignals} more signal(s))" if extraSignals > 0 else ""
     return f"{itemLink} - {reason}{extraText}"
 
@@ -407,7 +426,7 @@ def _inventoryFlagDetailedLine(item: dict[str, Any]) -> str:
     itemId = item.get("id") or "?"
     itemLink = _robloxCatalogLink(itemId, itemName)
     reason = _inventoryFlagReason(item)
-    extraSignals = max(0, int(item.get("matchCount") or 0) - 1)
+    extraSignals = _inventoryExtraSignalCount(item)
     extraText = f" (+{extraSignals} more signal(s))" if extraSignals > 0 else ""
     return f"{itemLink} - flagged because {reason}{extraText}."
 

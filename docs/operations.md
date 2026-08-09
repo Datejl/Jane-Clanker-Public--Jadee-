@@ -21,6 +21,11 @@ Main general log:
 
 That is the first place to look if Jane starts acting strange or a background task is blowing up.
 
+The live terminal is a little friendlier: colors when the console supports them,
+plain text when output is redirected, and a small Jane banner on startup. Set
+`JANE_CONSOLE_COLOR=always` or `never` if the automatic choice gets it wrong.
+The file log stays plain either way.
+
 ## Snapshots / Recovery
 
 Server safety and snapshots live under:
@@ -57,6 +62,9 @@ Check:
 - whether the bot synced commands on startup
 - whether the bot is connected to the right guild
 
+Jane does not create invites for unrecognized guilds by default. There is an
+opt-in diagnostic for it, but normal installs should leave that off.
+
 ### If restart/update behavior is odd
 
 Check:
@@ -64,6 +72,10 @@ Check:
 - `JANE_ENABLE_AUTO_GIT_UPDATE`
 - `JANE_DISABLE_GIT_PULL_ON_RESTART`
 - whether the host is supervisor-managed
+
+Normal shutdown now waits for Jane's background work to stop before SQLite is
+closed. If shutdown hangs, the runtime logs should show which cleanup step was
+the problem.
 
 ### If a feature works locally but not on the server
 

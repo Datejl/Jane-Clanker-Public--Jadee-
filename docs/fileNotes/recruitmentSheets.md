@@ -99,6 +99,10 @@ Important behavior:
 
 `applyApprovedLogsBatch(...)` also treats `hostedPatrolDelta` differently for RM+ rows.
 
+Batch updates only clean up and format the rows they actually touched. If Jane
+has to insert a missing member first, she reloads the row list because Sheets
+may have moved everyone below that new row.
+
 The usual approval deltas are:
 
 - recruitment log approval: recruiter gets points only

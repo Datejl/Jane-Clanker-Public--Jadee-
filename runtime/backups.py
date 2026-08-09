@@ -13,6 +13,10 @@ from db import sqlite as sqliteDb
 from db.sqlite import fetchAll, fetchOne
 
 
+def _repoRoot() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
 def _safeName(value: str) -> str:
     cleaned = "".join(ch for ch in str(value or "").strip() if ch.isalnum() or ch in {"-", "_"})
     return cleaned[:40] if cleaned else "manual"
@@ -21,8 +25,11 @@ def _safeName(value: str) -> str:
 def _backupDir(configModule: Any) -> Path:
     configured = str(getattr(configModule, "dbBackupDir", "") or "").strip()
     if configured:
-        return Path(configured).expanduser().resolve()
-    return (Path(__file__).resolve().parent.parent / "backups").resolve()
+        path = Path(configured).expanduser()
+        if not path.is_absolute():
+            path = _repoRoot() / path
+        return path.resolve()
+    return (_repoRoot() / "backups").resolve()
 
 
 def _runtimeSnapshotDir(configModule: Any) -> Path:
@@ -30,9 +37,9 @@ def _runtimeSnapshotDir(configModule: Any) -> Path:
     if configured:
         path = Path(configured).expanduser()
         if not path.is_absolute():
-            path = Path(__file__).resolve().parent.parent / path
+            path = _repoRoot() / path
         return path.resolve()
-    return (Path(__file__).resolve().parent.parent / "backups" / "dbSnapshots").resolve()
+    return (_repoRoot() / "backups" / "dbSnapshots").resolve()
 
 
 def _dbPath() -> Path:
@@ -118,9 +125,9 @@ def _diagnosticReportPath(configModule: Any) -> Path:
     if configured:
         path = Path(configured).expanduser()
         if not path.is_absolute():
-            path = Path(__file__).resolve().parent.parent / path
+            path = _repoRoot() / path
         return path.resolve()
-    return (Path(__file__).resolve().parent.parent / "runtime" / "data" / "db-state" / "latest.json").resolve()
+    return (_repoRoot() / "runtime" / "data" / "db-state" / "latest.json").resolve()
 
 
 async def writeRuntimeDiagnosticReport(

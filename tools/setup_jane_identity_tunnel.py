@@ -43,6 +43,29 @@ def resolveRepoPath(root: Path, rawPath: str | Path) -> Path:
     return (root / path).resolve()
 
 
+def _usesPowerShellRunner() -> bool:
+    return os.name == "nt"
+
+
+def _runnerPath(directory: Path, stem: str) -> Path:
+    suffix = ".ps1" if _usesPowerShellRunner() else ".sh"
+    return directory / f"{stem}{suffix}"
+
+
+def _writeRunner(path: Path, content: str, *, dryRun: bool) -> None:
+    if dryRun:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8", newline="\n")
+    if not _usesPowerShellRunner():
+        path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
+def _restrictPrivateFile(path: Path) -> None:
+    if os.name != "nt":
+        path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+
 def parseArgs(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -200,7 +223,6 @@ def writeEnvUpdates(
     for key, value in updates.items():
         value = str(value or "")
         nextLine = formatEnvLine(key, value)
-        oldValue = values.get(key)
         if key in indexes:
             if lines[indexes[key]] != nextLine:
                 lines[indexes[key]] = nextLine
@@ -213,6 +235,7 @@ def writeEnvUpdates(
     if not dryRun:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+        _restrictPrivateFile(path)
     return values, changed
 
 
@@ -312,16 +335,24 @@ def writeNgrokRunner(
     *,
     dryRun: bool = False,
 ) -> Path:
-    runnerPath = root / "localOnly" / "ngrok" / "run-jane-identity-tunnel.ps1"
+    runnerPath = _runnerPath(
+        root / "localOnly" / "ngrok",
+        "run-jane-identity-tunnel",
+    )
     binary = str(ngrok or "ngrok")
     upstream = f"http://{host}:{port}"
-    content = (
-        "$ErrorActionPreference = 'Stop'\n"
-        f"& {json.dumps(binary)} http {json.dumps(upstream)} --url {json.dumps(baseUrl)}\n"
-    )
-    if not dryRun:
-        runnerPath.parent.mkdir(parents=True, exist_ok=True)
-        runnerPath.write_text(content, encoding="utf-8")
+    if _usesPowerShellRunner():
+        content = (
+            "$ErrorActionPreference = 'Stop'\n"
+            f"& {json.dumps(binary)} http {json.dumps(upstream)} --url {json.dumps(baseUrl)}\n"
+        )
+    else:
+        content = (
+            "#!/usr/bin/env sh\n"
+            "set -eu\n"
+            f"exec {shlex.quote(binary)} http {shlex.quote(upstream)} --url {shlex.quote(baseUrl)}\n"
+        )
+    _writeRunner(runnerPath, content, dryRun=dryRun)
     return runnerPath
 
 
@@ -439,17 +470,27 @@ def writeTailscaleRunner(
     *,
     dryRun: bool = False,
 ) -> Path:
-    runnerPath = root / "localOnly" / "tailscale" / "run-jane-identity-funnel.ps1"
+    runnerPath = _runnerPath(
+        root / "localOnly" / "tailscale",
+        "run-jane-identity-funnel",
+    )
     binary = str(tailscale or "tailscale")
     upstream = tailscaleProxyTarget(host, port)
-    content = (
-        "$ErrorActionPreference = 'Stop'\n"
-        f"& {json.dumps(binary)} funnel --bg --yes --https={int(httpsPort)} {json.dumps(upstream)}\n"
-        f"& {json.dumps(binary)} funnel status\n"
-    )
-    if not dryRun:
-        runnerPath.parent.mkdir(parents=True, exist_ok=True)
-        runnerPath.write_text(content, encoding="utf-8")
+    if _usesPowerShellRunner():
+        content = (
+            "$ErrorActionPreference = 'Stop'\n"
+            f"& {json.dumps(binary)} funnel --bg --yes --https={int(httpsPort)} {json.dumps(upstream)}\n"
+            f"& {json.dumps(binary)} funnel status\n"
+        )
+    else:
+        quotedBinary = shlex.quote(binary)
+        content = (
+            "#!/usr/bin/env sh\n"
+            "set -eu\n"
+            f"{quotedBinary} funnel --bg --yes --https={int(httpsPort)} {shlex.quote(upstream)}\n"
+            f"{quotedBinary} funnel status\n"
+        )
+    _writeRunner(runnerPath, content, dryRun=dryRun)
     return runnerPath
 
 
@@ -585,15 +626,23 @@ def writeTunnelRunner(
     *,
     dryRun: bool = False,
 ) -> Path:
-    runnerPath = root / "localOnly" / "cloudflared" / "run-jane-identity-tunnel.ps1"
-    binary = str(cloudflared or "cloudflared")
-    content = (
-        "$ErrorActionPreference = 'Stop'\n"
-        f"& {json.dumps(binary)} tunnel --config {json.dumps(str(configPath))} run\n"
+    runnerPath = _runnerPath(
+        root / "localOnly" / "cloudflared",
+        "run-jane-identity-tunnel",
     )
-    if not dryRun:
-        runnerPath.parent.mkdir(parents=True, exist_ok=True)
-        runnerPath.write_text(content, encoding="utf-8")
+    binary = str(cloudflared or "cloudflared")
+    if _usesPowerShellRunner():
+        content = (
+            "$ErrorActionPreference = 'Stop'\n"
+            f"& {json.dumps(binary)} tunnel --config {json.dumps(str(configPath))} run\n"
+        )
+    else:
+        content = (
+            "#!/usr/bin/env sh\n"
+            "set -eu\n"
+            f"exec {shlex.quote(binary)} tunnel --config {shlex.quote(str(configPath))} run\n"
+        )
+    _writeRunner(runnerPath, content, dryRun=dryRun)
     return runnerPath
 
 
@@ -711,6 +760,7 @@ def writeJohnEnv(root: Path, baseUrl: str, apiToken: str, *, dryRun: bool = Fals
     if not dryRun:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
+        _restrictPrivateFile(path)
     return path
 
 

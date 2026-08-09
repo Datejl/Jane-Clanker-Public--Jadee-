@@ -1,156 +1,148 @@
 # Deployment
 
-This is the practical "how do we actually run Jane" doc.
+This is the practical "how do we keep Jane alive on the server" doc.
 
-For a fresh Windows dev machine, start with [New Machine Setup](newMachineSetup.md), then come back here for production/runtime details.
+The normal split is a Windows machine for development and a Linux server for production. Jane supports both; the examples below use Linux because that is where she is expected to live. For a fresh Windows dev machine, use [New Machine Setup](newMachineSetup.md).
 
-## Main Assumption
-
-Jane is meant to run from the private repo on a separate Windows server.
-
-That matters for a few reasons:
-
-- `.env` needs real secrets
-- `config.py` still holds a lot of server-specific IDs/settings
-- private extensions should usually be enabled there
-- repo-relative paths are safer than machine-specific absolute paths
-
-## Files That Matter
+## What Lives On The Host
 
 - `.env`
   Secrets and runtime flags
 - `config.py`
-  Server-specific IDs, channel IDs, role IDs, feature settings
+  Guild IDs, channel IDs, role IDs, and feature settings
 - `bot.py`
-  Entry point
+  Jane's entry point
+- `bot.db`
+  Live SQLite state; back it up and keep it out of Git
 
-## `.env` vs `config.py`
+Use `.env` for tokens, API keys, credential paths, and host-specific flags. Use `config.py` for the normal server layout and feature tuning. It is not a perfect split, but it is the one Jane currently understands.
 
-Use `.env` for:
+## Linux Setup
 
-- tokens
-- API keys
-- credentials paths
-- runtime flags that may differ between public/private or between hosts
+Jane needs Git and Python 3.11 or newer. From the checked-out private repo:
 
-Use `config.py` for:
+```bash
+python3 -m venv .venv
+./.venv/bin/python -m pip install --upgrade pip
+./.venv/bin/python -m pip install -r requirements.txt
+cp .env.example .env
+```
 
-- guild IDs
-- channel IDs
-- role IDs
-- feature tuning
-- layout choices
-- normal server-specific settings
+Fill in `.env`, check the server IDs in `config.py`, then give her a test start:
 
-That split is not perfect, but it is the current intended model.
+```bash
+./.venv/bin/python bot.py
+```
 
-## Important Env Flags
+Run Jane as a normal service account that owns the repo and runtime files. She does not need root, and giving a Discord bot root would be a fairly exciting way to learn that lesson.
 
-The big ones right now:
+## systemd
+
+A small unit is enough. Adjust the user and `/opt/jane-clanker` paths to match the server:
+
+```ini
+[Unit]
+Description=Jane Clanker Discord bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jane
+Group=jane
+WorkingDirectory=/opt/jane-clanker
+Environment=PYTHONUNBUFFERED=1
+Environment=JANE_SUPERVISOR_MANAGED=1
+ExecStart=/opt/jane-clanker/.venv/bin/python /opt/jane-clanker/bot.py
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=45
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Save it as `/etc/systemd/system/jane.service`, then:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now jane
+sudo systemctl status jane
+```
+
+Logs are available through both Jane's normal log files and systemd:
+
+```bash
+journalctl -u jane -f
+```
+
+`JANE_SUPERVISOR_MANAGED=1` tells Jane to hand intentional restarts back to systemd. Unexpected failures also restart through `Restart=on-failure`, while a normal `systemctl stop jane` stays stopped. Jane handles Linux's termination signal as a clean shutdown request.
+
+## Paths And Environment
+
+Prefer repo-relative paths in `.env`:
+
+```env
+ORBAT_GOOGLE_CREDENTIALS_PATH=localOnly/credentials/jane-clanker-service-account.json
+```
+
+Avoid paths copied from a particular machine:
+
+```env
+ORBAT_GOOGLE_CREDENTIALS_PATH=C:\Users\someone\Desktop\jane-clanker.json
+```
+
+Jane anchors her database, logs, task stats, secrets, and other runtime data to the repo. She can start from a different working directory, although setting `WorkingDirectory` in the service still keeps tools and humans less confused.
+
+By default Jane looks for `.env` beside `bot.py`. If the server keeps it elsewhere, set `JANE_ENV_PATH` in the service environment. A relative override is resolved from the repo root.
+
+## Important Flags
+
+The usual production values include:
 
 - `DISCORD_BOT_TOKEN`
 - `ROBLOX_OPEN_CLOUD_API_KEY`
 - `ROBLOX_INVENTORY_API_KEY`
 - `ROVER_API_KEY`
 - `ORBAT_GOOGLE_CREDENTIALS_PATH`
-
-Private/runtime flags:
-
+- `MINECRAFT_RCON_TOKEN` when Minecraft status is enabled
 - `JANE_ENABLE_PRIVATE_EXTENSIONS`
 - `ENABLE_DESTRUCTIVE_COMMANDS`
 - `DESTRUCTIVE_COMMANDS_DRY_RUN`
 - `JANE_DISABLE_GIT_PULL_ON_RESTART`
 - `JANE_ENABLE_AUTO_GIT_UPDATE`
-
-Optional host/runtime overrides:
-
-- `DISCORD_GUILD_ID`
-- `CLEAR_GLOBAL_COMMANDS`
-- `CLEAR_GUILD_COMMANDS`
-- `JANE_SUPERVISOR_MANAGED`
 - `JANE_INSTALL_REQUIREMENTS_ON_UPDATE`
 
-## Path Rules
+The optional Orientation API uses:
 
-Do not hardcode local machine paths unless you absolutely have to.
+- `JANE_ORIENTATION_API_ENABLED`
+- `JANE_ORIENTATION_API_HOST`
+- `JANE_ORIENTATION_API_PORT`
+- `JANE_ORIENTATION_API_TOKEN`
 
-Good:
+It stays local by default. If it needs to be public, put it behind a tunnel or reverse proxy instead of binding it casually to the internet. Older installs can still use `JANE_FLASK_API_TOKEN`, but new ones should use `JANE_ORIENTATION_API_TOKEN`.
 
-```env
-ORBAT_GOOGLE_CREDENTIALS_PATH=localOnly/credentials/jane-clanker-e5a133917b6b.json
-```
+## Updates
 
-Bad:
+Jane can check Git, pull safe changes, sync `requirements.txt`, and restart herself. The full behavior lives in [Auto Git Update](autoGitUpdate.md).
 
-```env
-ORBAT_GOOGLE_CREDENTIALS_PATH=C:\Users\someone\Desktop\whatever\jane-clanker-e5a133917b6b.json
-```
+Dependency updates use the exact Python executable already running Jane. A venv gets a normal pip install; an externally managed Linux Python gets the compatibility flag it requires. Production should still use a venv so Jane is not rearranging the server's system Python.
 
-Jane has already been patched in a few places to prefer repo-relative paths, because she is not supposed to depend on one specific dev machine.
+The updater protects live state including:
 
-## Running Jane
-
-Current normal startup:
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
-
-Then start Jane with:
-
-```powershell
-.\.venv\Scripts\python.exe bot.py
-```
-
-If you are running Jane under a service/supervisor, set:
-
-```env
-JANE_SUPERVISOR_MANAGED=1
-```
-
-That lets restart behavior cooperate better with the host process manager.
-
-## Git Update Behavior
-
-Jane can:
-
-- check for updates
-- optionally pull from Git
-- install updated `requirements.txt` dependencies before restart
-- restart herself
-
-The detailed updater behavior lives in [Auto Git Update](autoGitUpdate.md).
-
-But production should still be treated carefully. A bad push can still be a bad night.
-
-Important runtime flags:
-
-- `JANE_DISABLE_GIT_PULL_ON_RESTART`
-- `JANE_ENABLE_AUTO_GIT_UPDATE`
-
-If you want safer operation, the conservative choice is:
-
-- keep manual pull-on-restart enabled
-- keep fully automatic update checks conservative or off
-
-## Files Jane Should Not Treat As Disposable
-
-The updater already protects live runtime state like:
-
-- `bot.db`
-- `bot.db-shm`
-- `bot.db-wal`
+- `bot.db`, its WAL, and other SQLite files
 - `configData/divisions.json`
-- snapshot folders under `backups/`
+- runtime data and snapshot folders under `backups/`
 
-That keeps normal code updates from trampling live data.
+A bad push can still be a bad night, so keep automatic updates conservative until the server setup has had a proper shakeout.
 
-## Logging / Health
+## Health
 
-Useful runtime surfaces:
+Useful places to look:
 
 - `logs/general-errors.log`
+- `journalctl -u jane -f`
 - `?janeRuntime`
 - `!janeTerminal`
 
-`!janeTerminal` is read-only and meant for quick remote visibility, not remote shell access.
+`!janeTerminal` is read-only. It is quick remote visibility, not a remote shell wearing a fake moustache.

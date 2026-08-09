@@ -21,6 +21,7 @@ class FeatureStats:
     inFlight: int
     completed: int
     failed: int
+    canceled: int
     avgLatencyMs: float
     avgQueueWaitMs: float
 
@@ -35,6 +36,7 @@ class _FeatureBudget:
         self._inFlight = 0
         self._completed = 0
         self._failed = 0
+        self._canceled = 0
         self._latencySamples = deque(maxlen=500)
         self._queueSamples = deque(maxlen=500)
         self._lock = asyncio.Lock()
@@ -89,11 +91,15 @@ class _FeatureBudget:
         startedAt = perf_counter()
         queueMs = (startedAt - queuedAt) * 1000.0
         failed = False
+        canceled = False
         try:
             async with self._lock:
                 self._waiting = max(0, self._waiting - 1)
                 self._queueSamples.append(queueMs)
             return await opFactory()
+        except asyncio.CancelledError:
+            canceled = True
+            raise
         except Exception:
             failed = True
             raise
@@ -105,6 +111,8 @@ class _FeatureBudget:
                 self._completed += 1
                 if failed:
                     self._failed += 1
+                if canceled:
+                    self._canceled += 1
                 self._latencySamples.append(latencyMs)
                 self._drainWaitersLocked()
             try:
@@ -125,6 +133,7 @@ class _FeatureBudget:
                 inFlight=self._inFlight,
                 completed=self._completed,
                 failed=self._failed,
+                canceled=self._canceled,
                 avgLatencyMs=avgLatencyMs,
                 avgQueueWaitMs=avgQueueMs,
             )
@@ -162,6 +171,8 @@ class AsyncTaskBudgeter:
         waitingTotal = 0
         inFlightTotal = 0
         totalOps = 0
+        failedTotal = 0
+        canceledTotal = 0
         weightedLatency = 0.0
         for name, feature in self._features.items():
             stats = await feature.snapshot()
@@ -172,12 +183,15 @@ class AsyncTaskBudgeter:
                 "pending": stats.waiting + stats.inFlight,
                 "completed": stats.completed,
                 "failed": stats.failed,
+                "canceled": stats.canceled,
                 "avgLatencyMs": round(stats.avgLatencyMs, 2),
                 "avgQueueWaitMs": round(stats.avgQueueWaitMs, 2),
             }
             waitingTotal += stats.waiting
             inFlightTotal += stats.inFlight
             totalOps += stats.completed
+            failedTotal += stats.failed
+            canceledTotal += stats.canceled
             weightedLatency += stats.avgLatencyMs * stats.completed
         avgLatencyTotal = (weightedLatency / totalOps) if totalOps else 0.0
         return {
@@ -187,16 +201,23 @@ class AsyncTaskBudgeter:
                 "inFlight": inFlightTotal,
                 "pending": waitingTotal + inFlightTotal,
                 "completed": totalOps,
+                "failed": failedTotal,
+                "canceled": canceledTotal,
                 "avgLatencyMs": round(avgLatencyTotal, 2),
             },
         }
 
 
-def _limitFromConfig(key: str, default: int) -> int:
+def _intFromConfig(key: str, default: int) -> int:
     try:
         value = int(getattr(config, key, default) or default)
     except (TypeError, ValueError):
         value = default
+    return value
+
+
+def _limitFromConfig(key: str, default: int) -> int:
+    value = _intFromConfig(key, default)
     return max(1, value)
 
 
@@ -240,42 +261,27 @@ _discordPriority: contextvars.ContextVar[int] = contextvars.ContextVar(
 
 
 def _lowPriorityRobloxPriority() -> int:
-    try:
-        value = int(getattr(config, "runtimeBudgetLowPriorityRobloxPriority", 50) or 50)
-    except (TypeError, ValueError):
-        value = 50
+    value = _intFromConfig("runtimeBudgetLowPriorityRobloxPriority", 50)
     return max(1, value)
 
 
 def _lowestPriorityRobloxPriority() -> int:
-    try:
-        value = int(getattr(config, "runtimeBudgetLowestPriorityRobloxPriority", 1000) or 1000)
-    except (TypeError, ValueError):
-        value = 1000
+    value = _intFromConfig("runtimeBudgetLowestPriorityRobloxPriority", 1000)
     return max(_lowPriorityRobloxPriority() + 1, value)
 
 
 def _interactiveDiscordPriority() -> int:
-    try:
-        value = int(getattr(config, "runtimeBudgetInteractiveDiscordPriority", -100) or -100)
-    except (TypeError, ValueError):
-        value = -100
+    value = _intFromConfig("runtimeBudgetInteractiveDiscordPriority", -100)
     return min(-1, value)
 
 
 def _lowPriorityDiscordPriority() -> int:
-    try:
-        value = int(getattr(config, "runtimeBudgetLowPriorityDiscordPriority", 50) or 50)
-    except (TypeError, ValueError):
-        value = 50
+    value = _intFromConfig("runtimeBudgetLowPriorityDiscordPriority", 50)
     return max(1, value)
 
 
 def _lowestPriorityDiscordPriority() -> int:
-    try:
-        value = int(getattr(config, "runtimeBudgetLowestPriorityDiscordPriority", 1000) or 1000)
-    except (TypeError, ValueError):
-        value = 1000
+    value = _intFromConfig("runtimeBudgetLowestPriorityDiscordPriority", 1000)
     return max(_lowPriorityDiscordPriority() + 1, value)
 
 
@@ -307,31 +313,44 @@ async def runDiscord(opFactory: Callable[[], Awaitable[Any]]) -> Any:
     return await runBudgeted("discordIo", opFactory, priority=_discordPriority.get())
 
 
-async def runInteractiveDiscord(opFactory: Callable[[], Awaitable[Any]]) -> Any:
-    priority = _interactiveDiscordPriority()
-    token = _discordPriority.set(priority)
+async def _runWithPriority(
+    feature: str,
+    priorityVar: contextvars.ContextVar[int],
+    priority: int,
+    opFactory: Callable[[], Awaitable[Any]],
+) -> Any:
+    token = priorityVar.set(priority)
     try:
-        return await runBudgeted("discordIo", opFactory, priority=priority)
+        return await runBudgeted(feature, opFactory, priority=priority)
     finally:
-        _discordPriority.reset(token)
+        priorityVar.reset(token)
+
+
+async def runInteractiveDiscord(opFactory: Callable[[], Awaitable[Any]]) -> Any:
+    return await _runWithPriority(
+        "discordIo",
+        _discordPriority,
+        _interactiveDiscordPriority(),
+        opFactory,
+    )
 
 
 async def runLowPriorityDiscord(opFactory: Callable[[], Awaitable[Any]]) -> Any:
-    priority = _lowPriorityDiscordPriority()
-    token = _discordPriority.set(priority)
-    try:
-        return await runBudgeted("discordIo", opFactory, priority=priority)
-    finally:
-        _discordPriority.reset(token)
+    return await _runWithPriority(
+        "discordIo",
+        _discordPriority,
+        _lowPriorityDiscordPriority(),
+        opFactory,
+    )
 
 
 async def runLowestPriorityDiscord(opFactory: Callable[[], Awaitable[Any]]) -> Any:
-    priority = _lowestPriorityDiscordPriority()
-    token = _discordPriority.set(priority)
-    try:
-        return await runBudgeted("discordIo", opFactory, priority=priority)
-    finally:
-        _discordPriority.reset(token)
+    return await _runWithPriority(
+        "discordIo",
+        _discordPriority,
+        _lowestPriorityDiscordPriority(),
+        opFactory,
+    )
 
 
 async def runInteractionAck(opFactory: Callable[[], Awaitable[Any]]) -> Any:
@@ -343,21 +362,21 @@ async def runRoblox(opFactory: Callable[[], Awaitable[Any]]) -> Any:
 
 
 async def runLowPriorityRoblox(opFactory: Callable[[], Awaitable[Any]]) -> Any:
-    priority = _lowPriorityRobloxPriority()
-    token = _robloxPriority.set(priority)
-    try:
-        return await runBudgeted("robloxApi", opFactory, priority=priority)
-    finally:
-        _robloxPriority.reset(token)
+    return await _runWithPriority(
+        "robloxApi",
+        _robloxPriority,
+        _lowPriorityRobloxPriority(),
+        opFactory,
+    )
 
 
 async def runLowestPriorityRoblox(opFactory: Callable[[], Awaitable[Any]]) -> Any:
-    priority = _lowestPriorityRobloxPriority()
-    token = _robloxPriority.set(priority)
-    try:
-        return await runBudgeted("robloxApi", opFactory, priority=priority)
-    finally:
-        _robloxPriority.reset(token)
+    return await _runWithPriority(
+        "robloxApi",
+        _robloxPriority,
+        _lowestPriorityRobloxPriority(),
+        opFactory,
+    )
 
 
 async def runBackground(opFactory: Callable[[], Awaitable[Any]]) -> Any:

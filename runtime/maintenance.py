@@ -3,12 +3,11 @@ from __future__ import annotations
 import asyncio
 import calendar
 import logging
-import socket
-import ssl
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from runtime import automationReports as automationReportsRuntime
+from runtime import transientNetwork
 
 log = logging.getLogger(__name__)
 
@@ -63,43 +62,8 @@ class MaintenanceCoordinator:
         except Exception:
             return False
 
-    def _isGoogleRateLimitError(self, exc: Exception) -> bool:
-        return self._isRetryableSheetsError(exc, includeTransport=False)
-
     def _isRetryableSheetsError(self, exc: Exception, *, includeTransport: bool = True) -> bool:
-        transientStatuses = {408, 429, 500, 502, 503, 504}
-        transientMarkers = (
-            "wrong version number",
-            "cipher operation failed",
-            "bad record mac",
-            "unexpected eof",
-            "connection reset",
-            "connection aborted",
-            "temporarily unavailable",
-            "timed out",
-            "timeout",
-            "tls",
-            "ssl",
-        )
-
-        current: Exception | None = exc
-        while current is not None:
-            resp = getattr(current, "resp", None)
-            status = getattr(resp, "status", None)
-            if status in transientStatuses or getattr(current, "status_code", None) in transientStatuses:
-                return True
-            if includeTransport:
-                if isinstance(current, (ssl.SSLError, socket.timeout, TimeoutError, ConnectionError)):
-                    return True
-                if isinstance(current, OSError):
-                    lowerMessage = str(current).lower()
-                    if any(marker in lowerMessage for marker in transientMarkers):
-                        return True
-                lowerMessage = str(current).lower()
-                if any(marker in lowerMessage for marker in transientMarkers):
-                    return True
-            current = current.__cause__ if isinstance(current.__cause__, Exception) else None
-        return False
+        return transientNetwork.isRetryableHttpOrNetworkError(exc, includeTransport=includeTransport)
 
     def _parseIsoDatetime(self, value: str | None) -> datetime | None:
         if not value:
@@ -456,6 +420,7 @@ class MaintenanceCoordinator:
                             elapsedSec,
                             delaySec,
                             exc.__class__.__name__,
+                            extra={"skipErrorMirrorDm": True},
                         )
                         attempt += 1
                         await asyncio.sleep(delaySec)
@@ -468,6 +433,7 @@ class MaintenanceCoordinator:
                             maxAttempts,
                             exc.__class__.__name__,
                             exc,
+                            exc_info=True,
                         )
                     else:
                         log.exception("%s (%s) failed.", label, runType)
@@ -516,6 +482,7 @@ class MaintenanceCoordinator:
                         elapsedSec,
                         delaySec,
                         exc.__class__.__name__,
+                        extra={"skipErrorMirrorDm": True},
                     )
                     attempt += 1
                     await asyncio.sleep(delaySec)
@@ -528,6 +495,7 @@ class MaintenanceCoordinator:
                         maxAttempts,
                         exc.__class__.__name__,
                         exc,
+                        exc_info=True,
                     )
                 else:
                     log.exception("%s (%s) failed.", label, runType)
@@ -578,6 +546,7 @@ class MaintenanceCoordinator:
                             maxAttempts,
                             delaySec,
                             exc.__class__.__name__,
+                            extra={"skipErrorMirrorDm": True},
                         )
                         await asyncio.sleep(delaySec)
                         continue
@@ -588,6 +557,7 @@ class MaintenanceCoordinator:
                         "Recruitment monthly reset skipped after retryable sheets failure (%s: %s).",
                         lastExc.__class__.__name__,
                         lastExc,
+                        exc_info=(type(lastExc), lastExc, lastExc.__traceback__),
                     )
                 else:
                     raise lastExc
@@ -809,12 +779,30 @@ class MaintenanceCoordinator:
             log.exception("ORBAT maintenance (startup) failed.")
 
     def ensureBackgroundTasksStarted(self) -> None:
-        if self.startupMaintenanceTask is None:
-            self.startupMaintenanceTask = asyncio.create_task(self.runStartupMaintenanceOnce())
-        if self.globalOrbatUpdateTask is None:
-            self.globalOrbatUpdateTask = asyncio.create_task(self.runGlobalOrbatUpdateLoop())
+        if self.startupMaintenanceTask is None or self.startupMaintenanceTask.done():
+            self.startupMaintenanceTask = asyncio.create_task(
+                self.runStartupMaintenanceOnce(),
+                name="startup-maintenance",
+            )
+        if self.globalOrbatUpdateTask is None or self.globalOrbatUpdateTask.done():
+            self.globalOrbatUpdateTask = asyncio.create_task(
+                self.runGlobalOrbatUpdateLoop(),
+                name="global-orbat-maintenance",
+            )
 
     def cancelBackgroundTasks(self) -> None:
         for task in (self.startupMaintenanceTask, self.globalOrbatUpdateTask):
             if task is not None and not task.done():
                 task.cancel()
+
+    async def stopBackgroundTasks(self) -> None:
+        tasks = [
+            task
+            for task in (self.startupMaintenanceTask, self.globalOrbatUpdateTask)
+            if task is not None
+        ]
+        self.cancelBackgroundTasks()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self.startupMaintenanceTask = None
+        self.globalOrbatUpdateTask = None

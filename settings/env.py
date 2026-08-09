@@ -7,7 +7,15 @@ from dotenv import find_dotenv, load_dotenv
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
-load_dotenv(find_dotenv(), override=True)
+
+def _primaryEnvPath() -> Path | str:
+    repoEnvPath = _REPO_ROOT / ".env"
+    if repoEnvPath.is_file():
+        return repoEnvPath
+    return find_dotenv()
+
+
+load_dotenv(_primaryEnvPath(), override=True)
 
 
 def _envText(name: str, default: str = "") -> str:

@@ -8,8 +8,9 @@ The goal of these docs is not to document every function. The goal is to make th
 
 ## Start Here
 
-- [New Machine Setup](docs/newMachineSetup.md)
+- [Windows Dev Setup](docs/newMachineSetup.md)
 - [Architecture](docs/architecture.md)
+- [Extending Jane](docs/extendingJane.md)
 - [Deployment](docs/deployment.md)
 - [Operations](docs/operations.md)
 - [Auto Git Update](docs/autoGitUpdate.md)
@@ -52,27 +53,68 @@ The goal of these docs is not to document every function. The goal is to make th
 
 There are still a couple oddballs hanging around, like `cogs/applicationsCog.py`, but the structure is much saner than it used to be.
 
-## Running Jane Locally
+## Running Jane
 
 Basic flow:
 
 1. Create or activate a virtualenv.
-2. Install dependencies:
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
-
+2. Install dependencies.
 3. Copy [`.env.example`](.env.example) to `.env`.
 4. Fill in the required secrets/tokens.
 5. Adjust `config.py` for any server-specific IDs or behavior.
-6. Start Jane with:
+6. Start Jane.
+
+Windows PowerShell:
 
 ```powershell
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+copy .env.example .env
 .\.venv\Scripts\python.exe bot.py
 ```
 
-If you are running Jane on another Windows box, prefer repo-relative paths in `.env` where possible. The ORBAT credentials path is set up to work that way.
+Linux:
+
+```bash
+python3 -m venv .venv
+./.venv/bin/python -m pip install -r requirements.txt
+cp .env.example .env
+./.venv/bin/python bot.py
+```
+
+Keep paths in `.env` repo-relative where possible. Jane resolves runtime data from the repo instead of assuming the terminal started in a particular folder, which keeps local Windows work and the Linux host on speaking terms.
+
+For the actual Linux service setup, see [Deployment](docs/deployment.md).
+
+## Local Checks
+
+If you are working on Jane locally, install the extra tools with:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+```
+
+On Linux, the same command is:
+
+```bash
+./.venv/bin/python -m pip install -r requirements-dev.txt
+```
+
+Then you can run the local tests and basic code checks with:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\ruff.exe check . --select E9,F63,F7,F82
+```
+
+Linux uses the matching venv paths:
+
+```bash
+./.venv/bin/python -m pytest -q
+./.venv/bin/ruff check . --select E9,F63,F7,F82
+```
+
+The `tests/` folder stays with the project and is visible to Git so future maintainers inherit the same safety net.
 
 ## Public / Private Repo Split
 
@@ -93,3 +135,11 @@ python tools\exportPublicRepo.py C:\path\to\jane-public --clean
 `--clean` is safe to use against a cloned copy of the public repo. Jane preserves the target repo's `.git` directory and replaces the working tree around it.
 
 That export path does a secret scan and a smoke test so the public copy is less likely to be broken or embarrassing.
+
+## A Note From Potato
+
+Jane grew far beyond what I originally planned for her. She's finnicky, great at giving migraines, and threw me into the hospital for a bit. But she matters to me. If you're taking care of her next, be patient with her, keep making her better, and if you ever feel even the SLIGHTEST amount of burnout; Just stop. Take care of yourself, yeah?
+
+Take care of her for me.
+
+- potato

@@ -1,15 +1,15 @@
-# sqlite.py
+# SQLite
 
-[`db/sqlite.py`](../../db/sqlite.py) is Jane's centralized SQLite layer.
-
-It owns the database path, connection lifecycle, schema creation, lightweight migrations, indexes, and a few shared async helper functions used by almost every feature service.
+[`db/sqlite.py`](../../db/sqlite.py) is Jane's connection and query layer.
+[`db/schema.py`](../../db/schema.py) holds the big table and index setup that
+used to make `sqlite.py` rather unpleasant to read.
 
 ## What It Handles
 
 - stores Jane's main database at repo-root `bot.db`
 - opens one shared `aiosqlite` connection
 - enables connection pragmas like foreign keys, busy timeout, WAL, and normal synchronous mode
-- creates all tables and hot-path indexes during startup
+- asks `db/schema.py` to create or update tables and indexes during startup
 - tracks schema version with SQLite `PRAGMA user_version`
 - exposes small query/write helpers for feature modules
 
@@ -19,15 +19,13 @@ It owns the database path, connection lifecycle, schema creation, lightweight mi
 
 The important startup flow is:
 
-1. `_getConnection()` opens or returns the shared connection.
-2. `initDb()` takes `_dbWriteLock`.
-3. Jane reads the current `PRAGMA user_version`.
-4. `CREATE TABLE IF NOT EXISTS ...` statements create missing tables.
-5. Old-column additions run through `_executeOptional(...)`.
-6. indexes are created.
-7. if the stored schema version is behind `_schemaVersionTarget`, Jane writes a row to `db_schema_migrations` and bumps `PRAGMA user_version`.
+1. open the shared connection and wait out short-lived database locks
+2. run the schema setup in one transaction
+3. create anything missing and bring old databases forward
+4. record the new schema version only after everything worked
 
-The current target is `_schemaVersionTarget = 12`.
+The current version is 30. That version properly records the training-result
+export table that was added without a version bump earlier.
 
 ## Main Helper Functions
 
@@ -51,6 +49,8 @@ Runs one insert/update under `_dbWriteLock`, commits, and returns `lastrowid`.
 
 Runs a batch write under `_dbWriteLock`; returns early for an empty batch.
 
+These write helpers all use the same commit/rollback behavior.
+
 ### `runWriteTransaction(callback)`
 
 Runs a callback inside `BEGIN IMMEDIATE`, commits on success, and rolls back on exception.
@@ -63,7 +63,7 @@ Closes and clears the shared connection during shutdown.
 
 ## Table Groups
 
-The file is dense because almost every feature has at least one table here.
+The schema is dense because almost every feature has at least one table here.
 
 ### Sessions / BG Checks / Orientation
 
@@ -177,9 +177,12 @@ The migration style is intentionally simple:
 
 - new tables use `CREATE TABLE IF NOT EXISTS`
 - additive columns are usually done with `_executeOptional("ALTER TABLE ... ADD COLUMN ...")`
-- schema version is only bumped at the end of `initDb()`
+- schema version is only bumped at the end of `schema.applySchema(...)`
 
-`_executeOptional(...)` catches all exceptions. That makes repeated startup safe when a column already exists, but it also means a typo in an optional migration can be silently ignored. For important migrations, prefer verifying locally with a fresh DB and an existing DB copy.
+`_executeOptional(...)` only ignores the harmless "already exists" cases. Other
+errors stop startup, and the transaction rolls back instead of leaving half a
+migration behind. When changing the schema, bump the version and try it against
+both a fresh database and a copy of an older one.
 
 There is no down-migration system. Treat schema edits as forward-only.
 

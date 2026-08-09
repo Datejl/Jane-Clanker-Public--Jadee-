@@ -1236,21 +1236,39 @@ def _nameSimilarityReason(
     knownUsername: str,
     *,
     altWords: list[str],
+    markerCanonicalWords: set[str] | None = None,
     fuzzyEnabled: bool,
     fuzzyMinSimilarity: float,
     fuzzyMinLength: int,
+    candidateKey: str | None = None,
+    knownKey: str | None = None,
+    candidateCanonical: str | None = None,
+    knownCanonical: str | None = None,
 ) -> tuple[str | None, str, float | None]:
     candidateLiteral = str(candidateUsername or "").strip().lower()
     knownLiteral = str(knownUsername or "").strip().lower()
     if candidateLiteral and knownLiteral and candidateLiteral == knownLiteral:
         return None, "weak", None
-    candidateKey = characters.normalized_username_key(candidateUsername)
-    knownKey = characters.normalized_username_key(knownUsername)
+    if candidateKey is None:
+        candidateKey = characters.normalized_username_key(candidateUsername)
+    if knownKey is None:
+        knownKey = characters.normalized_username_key(knownUsername)
     if not candidateKey or not knownKey:
         return None, "weak", None
     if candidateKey == knownKey and str(candidateUsername or "").strip().lower() != str(knownUsername or "").strip().lower():
         return "known member username with separator or case changes", "weak", 1.0
-    reason = characters.username_alt_match_reason(candidateUsername, knownUsername, altWords=altWords)
+    if markerCanonicalWords is None:
+        markerCanonicalWords = characters.canonical_alt_word_keys(altWords)
+    reason = characters.username_alt_match_reason_for_keys(
+        candidateUsername,
+        knownUsername,
+        candidateKey=candidateKey,
+        knownKey=knownKey,
+        candidateCanonical=candidateCanonical,
+        knownCanonical=knownCanonical,
+        markerCanonicalWords=markerCanonicalWords,
+        altWords=altWords,
+    )
     if reason:
         strength = "moderate" if "marker" in reason or "alternate" in reason else "weak"
         return reason, strength, None
@@ -1279,6 +1297,7 @@ def _addNameVariantEvidence(
     configModule: Any = config,
 ) -> None:
     altWords = _altDetectorWords(configModule)
+    markerCanonicalWords = characters.canonical_alt_word_keys(altWords)
     fuzzyEnabled = bool(getattr(configModule, "bgIntelligenceKnownMemberAltFuzzyEnabled", True))
     fuzzyMinSimilarity = max(
         0.75,
@@ -1287,23 +1306,30 @@ def _addNameVariantEvidence(
     fuzzyMinLength = _positiveConfigInt(getattr(configModule, "bgIntelligenceKnownMemberAltFuzzyMinLength", 5), 5)
     currentDiscordId = _safeIntValue(report.discordUserId)
     currentRobloxId = _safeIntValue(report.robloxUserId)
+
+    preparedKnownRows: list[tuple[dict[str, Any], str, str, str, int, int]] = []
+    for known in knownRows:
+        if _pairWasCleared(known, clearedPairs):
+            continue
+        knownUsername = str(known.get("robloxUsername") or "").strip()
+        knownKey = characters.normalized_username_key(knownUsername)
+        if not knownKey:
+            continue
+        knownCanonical = characters.canonical_username_key(knownUsername)
+        knownDiscordId = _safeIntValue(known.get("discordUserId"))
+        knownRobloxId = _safeIntValue(known.get("robloxUserId"))
+        if currentRobloxId > 0 and knownRobloxId == currentRobloxId:
+            continue
+        if currentDiscordId > 0 and knownDiscordId == currentDiscordId:
+            continue
+        preparedKnownRows.append((known, knownUsername, knownKey, knownCanonical, knownDiscordId, knownRobloxId))
+
     for candidateKind, candidateUsername in _altCandidateUsernames(report):
         candidateKey = characters.normalized_username_key(candidateUsername)
         if not candidateKey:
             continue
-        for known in knownRows:
-            if _pairWasCleared(known, clearedPairs):
-                continue
-            knownUsername = str(known.get("robloxUsername") or "").strip()
-            knownKey = characters.normalized_username_key(knownUsername)
-            if not knownKey:
-                continue
-            knownDiscordId = _safeIntValue(known.get("discordUserId"))
-            knownRobloxId = _safeIntValue(known.get("robloxUserId"))
-            if currentRobloxId > 0 and knownRobloxId == currentRobloxId:
-                continue
-            if currentDiscordId > 0 and knownDiscordId == currentDiscordId:
-                continue
+        candidateCanonical = characters.canonical_username_key(candidateUsername)
+        for known, knownUsername, knownKey, knownCanonical, knownDiscordId, knownRobloxId in preparedKnownRows:
             if candidateKind == "previous_username" and candidateKey == knownKey:
                 reason = "prior Roblox username exactly matches a known member username"
                 strength = "moderate"
@@ -1313,9 +1339,14 @@ def _addNameVariantEvidence(
                     candidateUsername,
                     knownUsername,
                     altWords=altWords,
+                    markerCanonicalWords=markerCanonicalWords,
                     fuzzyEnabled=fuzzyEnabled,
                     fuzzyMinSimilarity=fuzzyMinSimilarity,
                     fuzzyMinLength=fuzzyMinLength,
+                    candidateKey=candidateKey,
+                    knownKey=knownKey,
+                    candidateCanonical=candidateCanonical,
+                    knownCanonical=knownCanonical,
                 )
             if not reason:
                 continue

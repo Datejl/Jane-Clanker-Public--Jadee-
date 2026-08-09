@@ -51,6 +51,8 @@ Some of the bigger things in here:
 
 - startup / bootstrap
 - maintenance jobs
+- message/event routing
+- background task ownership and cleanup
 - error logging
 - webhook helpers
 - pause / restart / git update flow
@@ -60,11 +62,18 @@ Some of the bigger things in here:
 
 If Jane feels like she is "doing something in the background", there is a good chance it lives here.
 
+`bot.py` still registers the Discord events, but most of the heavier routing and
+background work now lives in smaller runtime modules. Background loops are also
+cleaned up before a cog is reloaded, which helps avoid Jane doing the same job
+twice.
+
 ### `db/`
 
 SQLite lives here.
 
-Right now the DB layer is still centralized pretty heavily in `db/sqlite.py`. It works, but it is one of the denser files in the repo.
+`db/sqlite.py` handles the shared connection and normal queries. The very large
+table/index setup now lives in `db/schema.py`, which makes both files a little
+less painful to work in.
 
 ### `plugins/`
 
@@ -76,6 +85,18 @@ This is the start of the public/private split.
 The core bot can load optional extensions from either place.
 
 Private extensions only load when `config.enablePrivateExtensions` is truthy.
+
+### HTTP Surfaces
+
+Jane can expose a few narrowly scoped HTTP services:
+
+- the gambling API in `runtime/gamblingApi.py`
+- the Jane Identity callback/API in `runtime/janeIdentityWeb.py`
+- the optional orientation clock-in endpoint in `API/EndPoints.py`
+
+The orientation API is off unless it is configured, and new setups keep it on
+`127.0.0.1` by default. The old generic `/SQL` endpoint is gone; HTTP features
+should get their own narrow route instead.
 
 ## Current Extension Model
 
@@ -91,6 +112,11 @@ That keeps the public/private split simple:
 
 - public repo keeps core + public-safe optional stuff
 - private repo can add private-only extensions without rewriting startup
+
+For the reusable call points behind those extensions, see
+[Extending Jane](extendingJane.md). It covers the shared workflow engine, small
+daily message triggers, Identity, recruitment sheets, task ownership, retries,
+and SQLite transactions without turning this doc into a phone book.
 
 ## Data / State
 
@@ -125,6 +151,6 @@ A few honest notes:
 - `cogs/applicationsCog.py` is still a top-level oddball
 - `silly/` still contains some real functionality, not just joke stuff
 - some older features still mix UI logic and service logic more than they should
-- `db/sqlite.py` is still carrying a lot
+- the SQLite schema is still large, even after moving it out of the runtime DB helper
 
 None of that blocks Jane from working. It just means the architecture is still mid-cleanup rather than "finished."

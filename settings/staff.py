@@ -155,22 +155,25 @@ trainingLogBackfillDays = 2
 trainingLogStartupSyncDelaySec = 90
 trainingLogStartupBackfillMessageLimit = 250
 trainingLogArchiveIndexLimit = 500
+trainingLogStartupMirrorNewRows = True
 orbatStartupMaintenanceDelaySec = 45
 trainingSummaryWebhookName = "Jane Training Summary"
 trainingMirrorWebhookName = "Jane Training Log"
 johnEventLogChannelId = 0
 johnClankerBotId = 0
 
-honorGuardEnabled = False
+honorGuardEnabled = True
 honorGuardCommandGuildIds = []
 honorGuardReviewChannelId = 0
 honorGuardLogChannelId = 0
 honorGuardArchiveChannelId = 0
+honorGuardOrbatAuditChannelId = 0
 honorGuardSpreadsheetId = _envText(
     "HONOR_GUARD_SPREADSHEET_ID",
-    "1aLD68JNA2nRjTxG1c3DZOtb_DPRXE4uNKN7ZxpKo_0k",
+    "1KwNuScn-19IO56AUf0fEmgRrthgS4Vrf0zVFDgxV6Do",
 )
 honorGuardMemberSheetName = "Main"
+honorGuardCMPSheetName = "Cavalry"
 honorGuardScheduleSheetName = "Event Scheduling"
 honorGuardArchiveSheetName = "Event Archive"
 honorGuardEventHostsSheetName = "Event Hosts"
@@ -181,15 +184,20 @@ honorGuardCredentialsPathConfigKey = "orbatGoogleCredentialsPath"
 honorGuardDiscordIdColumn = ""
 honorGuardRobloxUsernameColumn = "A"
 honorGuardRankColumn = "B"
-honorGuardActivityStatusColumn = "H"
+honorGuardActivityStatusColumn = "G"
 honorGuardQuotaPointsColumn = "E"
-honorGuardPromotionEventPointsColumn = "K"
-honorGuardPromotionAwardedPointsColumn = "L"
-honorGuardPromotionTotalPointsColumn = ""
+honorGuardEventPointsColumn = "J"
+honorGuardAwardedPointsColumn = "K"
+honorGuardTotalPlatoonPointsColumn = "L"
+honorGuardTotalPointsColumn = "M"
+# Legacy aliases retained for settings/operations.py rowModel.
+honorGuardPromotionEventPointsColumn = honorGuardEventPointsColumn
+honorGuardPromotionAwardedPointsColumn = honorGuardAwardedPointsColumn
+honorGuardPromotionTotalPointsColumn = honorGuardTotalPointsColumn
 honorGuardHostedEventsColumn = ""
 honorGuardJuniorExamPassedColumn = "N"
 honorGuardNcoExamPassedColumn = "O"
-honorGuardQuotaCompleteFormulaColumn = "G"
+honorGuardQuotaCompleteFormulaColumn = "F"
 honorGuardPromotionEligibleFormulaColumn = "P"
 honorGuardStrikesColumn = "Q"
 
@@ -200,8 +208,8 @@ honorGuardScheduleEventTimeColumn = "B"
 honorGuardScheduleHostColumn = "C"
 honorGuardScheduleCoHostsColumn = "D"
 honorGuardScheduleSupervisorsColumn = "E"
-honorGuardScheduleEventDetailColumn = "F"
-honorGuardScheduleNotesColumn = "G"
+honorGuardScheduleEventDetailColumn = "G"
+honorGuardScheduleNotesColumn = "H"
 honorGuardScheduleStatusColumn = ""
 honorGuardArchiveColumns = [
     "eventType",
@@ -222,7 +230,7 @@ honorGuardEventHostInspectionsColumn = "J"
 honorGuardEventHostEventTypeColumns = {
     "jge": honorGuardEventHostExamsColumn,
     "junior guardsman exam": honorGuardEventHostExamsColumn,
-    "nco_exam": honorGuardEventHostExamsColumn,
+    "ncoe": honorGuardEventHostExamsColumn,
     "nco exam": honorGuardEventHostExamsColumn,
     "orientation": honorGuardEventHostTrainingsColumn,
     "training": honorGuardEventHostTrainingsColumn,
@@ -261,33 +269,143 @@ honorGuardExcuseStatusValues = [
 ]
 honorGuardBiweeklyQuotaPointsRequired = 4
 honorGuardEarlyActiveQuotaPoints = 8
-honorGuardSentryDutyMinutesRequired = 30
-honorGuardSentryDutyQuotaPoints = 1
-honorGuardSentryDutyPromotionPoints = 1
+honorGuardSoloSentryDutyMinutesRequired = 30
+honorGuardSoloSentryDutyEventPoints = 1
 honorGuardAttendanceQuotaPointsByEventType = {
     "gamenight": 0.5,
 }
-honorGuardAttendancePromotionPointsByEventType = {
-    "inspection": 8,
-    "sentry": 1,
+honorGuardAttendanceEventPointsByEventType = {
+    "drill" : {
+        "base": 2,
+        "per_intervall": 0,
+        "minimum": 0
+    },
+    "inspection": {
+        "base": 8,
+        "per_intervall": 0,
+        "minimum": 0
+    },
+    "sentry": {
+        "base": 0,
+        "per_intervall": 1,
+        "minimum": 0
+    },
+    "tryout": {
+        "base": 0,
+        "per_intervall": 1,
+        "minimum": 0
+    },
+    "orientation": {
+        "base": 0,
+        "per_intervall": 1,
+        "minimum": 2
+    },
+    "jge": {
+        "base": 5,
+        "per_intervall": 0,
+        "minimum": 0
+    },
+    "ncoe": {
+        "base": 5,
+        "per_intervall": 0,
+        "minimum": 0
+    },
+    "gamenight": {
+        "base": 1,
+        "per_intervall": 0,
+        "minimum": 0
+    },
 }
-honorGuardOfficerHostPromotionPointsByEventType = {
+honorGuardHostEventPointsByEventType = {
     "gamenight": 1,
     "orientation": 2,
-    "training": 3,
+    "drill": 3,
     "lecture": 3,
     "tryout": 6,
     "inspection": 8,
 }
-honorGuardOfficerSupervisorPromotionPointsByEventType = {
-    "orientation": 2,
-}
-honorGuardOfficerCohostPromotionPointsByEventType = {
-    "inspection": 8,
+honorGuardSupervisorEventPointsByEventType = {
+    "orientation": {
+        "base": 0,
+        "per_intervall": 1,
+        "minimum": 2
+    },
+    "drill" : {
+        "base": 0,
+        "per_intervall": 0,
+        "minimum": 0
+    },
 }
 honorGuardJgePointsPerGradedAttendee = 0.75
 honorGuardNcoExamPointsPerGradedAttendee = 1.5
 honorGuardNcoExamScreenAssistPoints = 2
+
+# Discord role IDs used to bucket a Honor Guard attendee at clock-in time.
+# A user is classified by the first matching bucket in order: enlisted, nco, officer.
+honorGuardEnlistedRoleIds: list[int] = [
+    1477788769641037826, # Junior Guardsman
+    1477788768256917786  # Guardsman
+]
+honorGuardNcoRoleIds: list[int] = [
+    1477788766583259309, # Senior Guardsman
+    1478133203788107827  # Platoon Sergeant
+]
+honorGuardOfficerRoleIds: list[int] = [
+	1477788764804743400, # Parade Officer
+	1533539376502669312, # Parade Captain
+	1477788762774835333, # Parade Marshal
+	1477788760866427192, # Inspector General
+	1533539146856140870, # Platoon Corporal
+	1477788754805788875  # HG Commandant
+]
+
+honorGuardChannelId: int = 1477718269921202226
+
+honorGuardActivePlatoons = ["CMP"]
+honorGuardAllowedRanks = [
+    "Commandant",
+    "Deputy Commandant",
+    "Oversight",
+    "Inspector General",
+    "Board Advisor",
+    "Parade Marshal",
+    "Parade Captain",
+    "Parade Officer",
+    "Platoon Sergeant",
+    "Platoon Corporal",
+    "Senior Guardsman",
+    "Guardsman",
+    "Junior Guardsman",
+]
+honorGuardPlatoonAllowedRanks = {
+    "cmp": [
+        "Major",
+        "Lieutenant",
+        "Sergeant",
+        "Corporal",
+        "Trooper First Class",
+        "Trooper",
+    ],
+}
+honorGuardMemberSectionHeaders = [
+    "IGB",
+    "CO",
+    "NCO",
+    "Guardsman",
+    "RETIRED",
+]
+honorGuardPlatoonSectionHeaders = [
+    "HR",
+    "MR",
+    "LR",
+    "RETIRED",
+]
+
+# Honor Guard platoon sheet columns.
+honorGuardPlatoonDiscordIdColumn = ""
+honorGuardPlatoonRobloxUsernameColumn = "A"
+honorGuardPlatoonRankColumn = "B"
+honorGuardPlatoonPointsColumn = "D"
 
 canCreateVoiceChatAll = [
     1376949984750206986,

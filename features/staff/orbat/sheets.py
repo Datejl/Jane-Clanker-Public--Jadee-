@@ -47,19 +47,21 @@ def _getColumns() -> Dict[str, str]:
     return {
         "discordId": getattr(config, "orbatColumnDiscordId", "A") or "",
         "robloxUser": getattr(config, "orbatColumnRobloxUser", "B"),
-        "rank": getattr(config, "orbatColumnRank", "D"),
-        "clearance": getattr(config, "orbatColumnClearance", "E"),
-        "status": getattr(config, "orbatColumnStatus", "G"),
-        "loaInfo": getattr(config, "orbatColumnLoaInfo", "H"),
-        "department": getattr(config, "orbatColumnDepartment", "J"),
-        "notes": getattr(config, "orbatColumnNotes", "K"),
-        "mic": getattr(config, "orbatColumnMic", "R"),
-        "timezone": getattr(config, "orbatColumnTimezone", "S"),
-        "ageGroup": getattr(config, "orbatColumnAgeGroup", "T"),
-        "shifts": getattr(config, "orbatColumnShifts", "M"),
-        "otherEvents": getattr(config, "orbatColumnOtherEvents", "N"),
-        "total": getattr(config, "orbatColumnTotal", "O"),
-        "allTime": getattr(config, "orbatColumnAllTime", "P"),
+        "rank": getattr(config, "orbatColumnRank", "C"),
+        "clearance": getattr(config, "orbatColumnClearance", "D"),
+        "status": getattr(config, "orbatColumnStatus", "E"),
+        "loaInfo": getattr(config, "orbatColumnLoaInfo", "G"),
+        "department": getattr(config, "orbatColumnDepartment", "F"),
+        "notes": getattr(config, "orbatColumnNotes", "H"),
+        "mic": getattr(config, "orbatColumnMic", "") or "",
+        "timezone": getattr(config, "orbatColumnTimezone", "N"),
+        "ageGroup": getattr(config, "orbatColumnAgeGroup", "O"),
+        "shifts": getattr(config, "orbatColumnShifts", "I"),
+        "otherEvents": getattr(config, "orbatColumnOtherEvents", "J"),
+        "total": getattr(config, "orbatColumnTotal", "K"),
+        "allTimeShifts": getattr(config, "orbatColumnAllTimeShifts", "L"),
+        "allTime": getattr(config, "orbatColumnAllTime", "M"),
+        "strikes": getattr(config, "orbatColumnStrikes", "P"),
     }
 
 
@@ -74,10 +76,25 @@ _ORBAT_VISIBLE_COLUMN_KEYS = (
     "shifts",
     "otherEvents",
     "total",
+    "allTimeShifts",
     "allTime",
     "mic",
     "timezone",
     "ageGroup",
+    "strikes",
+)
+
+_ORBAT_COUNTER_COLUMN_KEYS = (
+    "shifts",
+    "otherEvents",
+    "total",
+    "allTimeShifts",
+    "allTime",
+)
+
+_ORBAT_PRESERVED_COLUMN_KEYS = (
+    *_ORBAT_COUNTER_COLUMN_KEYS,
+    "strikes",
 )
 
 
@@ -513,40 +530,61 @@ def _applyRowTextStyle(
 
 def _coerceNumber(value: Any) -> float:
     try:
-        return float(value)
+        return float(str(value or "").replace(",", "").strip())
     except (TypeError, ValueError):
         return 0.0
 
-def _computeHistoryValue(mValue: Any, nValue: Any, pValue: Any) -> int:
-    m = _coerceNumber(mValue)
-    n = _coerceNumber(nValue)
-    p = _coerceNumber(pValue)
-    history = p - m - n
-    if history < 0:
-        history = 0
-    return int(round(history))
+def _coerceInt(value: Any) -> int:
+    return int(round(_coerceNumber(value)))
 
-def _applyTotalsFormulasWithHistory(service, targetRow: int, historyValue: int) -> None:
-    if not targetRow:
-        return
-    shiftCol = getattr(config, "orbatColumnShifts", "M")
-    otherCol = getattr(config, "orbatColumnOtherEvents", "N")
-    totalCol = getattr(config, "orbatColumnTotal", "O")
-    allTimeCol = getattr(config, "orbatColumnAllTime", "P")
-    oFormula = f"={shiftCol}{targetRow}+{otherCol}{targetRow}"
-    pFormula = (
-        f"={shiftCol}{targetRow}+{otherCol}{targetRow}+{historyValue}"
-        if historyValue
-        else oFormula
+
+def _defaultCounterColumnValues(columns: Dict[str, str]) -> Dict[str, Any]:
+    return {
+        columns[key]: 0
+        for key in _ORBAT_COUNTER_COLUMN_KEYS
+        if columns.get(key)
+    }
+
+
+def _readRowValuesByKeys(
+    service,
+    sheetId: str,
+    columns: Dict[str, str],
+    row: int,
+    keys: tuple[str, ...],
+) -> Dict[str, Any]:
+    ranges: list[str] = []
+    rangeColumns: list[str] = []
+    for key in keys:
+        col = columns.get(key, "")
+        if not col:
+            continue
+        ranges.append(_range(col, row))
+        rangeColumns.append(col)
+    if not ranges:
+        return {}
+    fetched = (
+        service.spreadsheets()
+        .values()
+        .batchGet(
+            spreadsheetId=sheetId,
+            ranges=ranges,
+            valueRenderOption="UNFORMATTED_VALUE",
+        )
+        .execute()
+        .get("valueRanges", [])
     )
-    data = [
-        {"range": _range(totalCol, targetRow), "values": [[oFormula]]},
-        {"range": _range(allTimeCol, targetRow), "values": [[pFormula]]},
-    ]
-    service.spreadsheets().values().batchUpdate(
-        spreadsheetId=_spreadsheetId(),
-        body={"valueInputOption": "USER_ENTERED", "data": data},
-    ).execute()
+    out: Dict[str, Any] = {}
+    for idx, col in enumerate(rangeColumns):
+        value = ""
+        try:
+            values = fetched[idx].get("values", [])
+            if values and values[0]:
+                value = values[0][0]
+        except Exception:
+            value = ""
+        out[col] = value
+    return out
 
 
 def _loadRangeValues(service, rangeA1: str) -> list[list[str]]:
@@ -681,6 +719,8 @@ def _upsertOrbatRowSimple(
         _invalidateLookupCaches()
         return row
 
+    valuesByColumn.update(_defaultCounterColumnValues(columns))
+
     maxCol = _maxColumnIndex(list(valuesByColumn.keys()))
     rowValues = [""] * maxCol
     for col, value in valuesByColumn.items():
@@ -770,7 +810,7 @@ def upsertOrbatRow(
 
     # If existing row is outside the target section, delete it so we can reinsert.
     needsBanding = False
-    historyValue = 0
+    preservedValuesByColumn: Dict[str, Any] = {}
     if existingRow:
         if section == "ANROCOM" and startRow <= existingRow <= endRow:
             valuesByColumn = {
@@ -788,38 +828,15 @@ def upsertOrbatRow(
             if columns["discordId"]:
                 valuesByColumn[columns["discordId"]] = str(discordId)
             _writeRow(service, sheetId, columns, valuesByColumn, existingRow)
-            _applyTotalsFormulasWithHistory(service, existingRow, 0)
             return existingRow
 
-        shiftCol = getattr(config, "orbatColumnShifts", "M")
-        otherCol = getattr(config, "orbatColumnOtherEvents", "N")
-        allTimeCol = getattr(config, "orbatColumnAllTime", "P")
-        ranges = [
-            _range(shiftCol, existingRow),
-            _range(otherCol, existingRow),
-            _range(allTimeCol, existingRow),
-        ]
-        fetched = (
-            service.spreadsheets()
-            .values()
-            .batchGet(spreadsheetId=sheetId, ranges=ranges)
-            .execute()
-            .get("valueRanges", [])
+        preservedValuesByColumn = _readRowValuesByKeys(
+            service,
+            sheetId,
+            columns,
+            existingRow,
+            _ORBAT_PRESERVED_COLUMN_KEYS,
         )
-
-        def _cellAt(index: int) -> str:
-            try:
-                values = fetched[index].get("values", [])
-                if not values or not values[0]:
-                    return ""
-                return str(values[0][0])
-            except Exception:
-                return ""
-
-        shiftValue = _cellAt(0)
-        otherValue = _cellAt(1)
-        allTimeValue = _cellAt(2)
-        historyValue = _computeHistoryValue(shiftValue, otherValue, allTimeValue)
 
         sheetGid = _getSheetId(service)
         service.spreadsheets().batchUpdate(
@@ -989,9 +1006,12 @@ def upsertOrbatRow(
     }
     if columns["discordId"]:
         valuesByColumn[columns["discordId"]] = str(discordId)
+    if preservedValuesByColumn:
+        valuesByColumn.update(preservedValuesByColumn)
+    else:
+        valuesByColumn.update(_defaultCounterColumnValues(columns))
 
     _writeRow(service, sheetId, columns, valuesByColumn, insertRow)
-    _applyTotalsFormulasWithHistory(service, insertRow, historyValue)
     if needsBanding:
         values = _loadRangeValues(service, _configuredReadRange(columns))
         nameValues = _columnValues(values, columns["robloxUser"])
@@ -1017,6 +1037,7 @@ def organizeOrbatRows() -> dict:
         return {"sections": 0, "updated": 0}
 
     bounds = _sectionBounds(headers, max(len(nameValues), 1))
+    sectionOrder = [section for section, _ in sorted(headers.items(), key=lambda item: item[1])]
     sheetName = _sheetName()
 
     columnLetters = [
@@ -1033,22 +1054,28 @@ def organizeOrbatRows() -> dict:
         columns.get("ageGroup", ""),
         columns.get("shifts", ""),
         columns.get("otherEvents", ""),
+        columns.get("total", ""),
+        columns.get("allTimeShifts", ""),
+        columns.get("allTime", ""),
+        columns.get("strikes", ""),
     ]
     columnLetters = [col for col in columnLetters if col]
     columnIndices = {col: _columnToIndex(col) - 1 for col in columnLetters}
 
-    shiftCol = columns.get("shifts", "M") or "M"
-    otherCol = columns.get("otherEvents", "N") or "N"
-    totalCol = getattr(config, "orbatColumnTotal", "O")
-    allTimeCol = getattr(config, "orbatColumnAllTime", "P")
-    shiftIdx = _columnToIndex(shiftCol) - 1
-    otherIdx = _columnToIndex(otherCol) - 1
-    allTimeIdx = _columnToIndex(allTimeCol) - 1
-
     updatedSections = 0
-    for section, (startRow, endRow) in bounds.items():
+    for section in sectionOrder:
         if section == "ANROCOM":
             continue
+        values = _loadRangeValuesWithOptions(service, _configuredReadRange(columns))
+        nameValues = _columnValues(values, columns["robloxUser"])
+        rankValues = _columnValues(values, columns["rank"])
+        departmentValues = _columnValues(values, columns["department"])
+        headers = _findSectionHeaders(nameValues)
+        bounds = _sectionBounds(headers, max(len(nameValues), 1))
+        if section not in bounds:
+            continue
+        startRow, endRow = bounds[section]
+
         emptyRows = []
         vacantRows = []
         for rowIdx in range(startRow, endRow + 1):
@@ -1108,10 +1135,6 @@ def organizeOrbatRows() -> dict:
                     valuesByCol[col] = rowValues[idx]
                 else:
                     valuesByCol[col] = ""
-            shiftValue = rowValues[shiftIdx] if shiftIdx < len(rowValues) else ""
-            otherValue = rowValues[otherIdx] if otherIdx < len(rowValues) else ""
-            allTimeValue = rowValues[allTimeIdx] if allTimeIdx < len(rowValues) else ""
-            historyValue = _computeHistoryValue(shiftValue, otherValue, allTimeValue)
             entries.append(
                 {
                     "row": rowIdx,
@@ -1120,7 +1143,6 @@ def organizeOrbatRows() -> dict:
                     "departmentKey": _departmentSortKey(deptCell),
                     "departmentIndex": _highRankDepartmentIndex(deptCell),
                     "values": valuesByCol,
-                    "historyValue": historyValue,
                 }
             )
 
@@ -1151,16 +1173,6 @@ def organizeOrbatRows() -> dict:
                         "values": [[value]],
                     }
                 )
-            oFormula = f"={shiftCol}{row}+{otherCol}{row}"
-            historyValue = entry.get("historyValue", 0)
-            pFormula = (
-                f"={shiftCol}{row}+{otherCol}{row}+{historyValue}"
-                if historyValue
-                else oFormula
-            )
-            data.append({"range": f"{sheetName}!{totalCol}{row}", "values": [[oFormula]]})
-            data.append({"range": f"{sheetName}!{allTimeCol}{row}", "values": [[pFormula]]})
-
         try:
             service.spreadsheets().values().batchUpdate(
                 spreadsheetId=sheetId,
@@ -1217,19 +1229,6 @@ def updateLoaStatus(
     return row
 
 
-def _readCellValue(service, sheetId: str, cellRange: str) -> str:
-    values = (
-        service.spreadsheets()
-        .values()
-        .get(spreadsheetId=sheetId, range=cellRange)
-        .execute()
-        .get("values", [])
-    )
-    if not values or not values[0]:
-        return ""
-    return str(values[0][0])
-
-
 def incrementEventCount(
     discordId: int,
     columnKey: str,
@@ -1248,19 +1247,58 @@ def incrementEventCount(
     if not row:
         return 0
 
-    cellRange = _range(column, row)
-    currentRaw = _readCellValue(service, sheetId, cellRange)
-    try:
-        currentValue = int(str(currentRaw).strip())
-    except (TypeError, ValueError):
-        currentValue = 0
-    newValue = currentValue + delta
+    targetRanges: dict[str, str] = {"event": _range(column, row)}
+    totalCol = columns.get("total", "")
+    allTimeCol = columns.get("allTime", "")
+    allTimeShiftsCol = columns.get("allTimeShifts", "")
+    if totalCol:
+        targetRanges["total"] = _range(totalCol, row)
+    if allTimeCol:
+        targetRanges["allTime"] = _range(allTimeCol, row)
+    if columnKey == "shifts" and allTimeShiftsCol:
+        targetRanges["allTimeShifts"] = _range(allTimeShiftsCol, row)
+
+    orderedKeys = list(targetRanges.keys())
+    orderedRanges = [targetRanges[key] for key in orderedKeys]
+    fetched = (
+        service.spreadsheets()
+        .values()
+        .batchGet(
+            spreadsheetId=sheetId,
+            ranges=orderedRanges,
+            valueRenderOption="UNFORMATTED_VALUE",
+        )
+        .execute()
+        .get("valueRanges", [])
+    )
+
+    currentValues: dict[str, int] = {}
+    for idx, key in enumerate(orderedKeys):
+        rawValue = ""
+        try:
+            values = fetched[idx].get("values", [])
+            if values and values[0]:
+                rawValue = values[0][0]
+        except Exception:
+            rawValue = ""
+        currentValues[key] = _coerceInt(rawValue)
+
+    updatesByRange: dict[str, Any] = {
+        targetRanges["event"]: currentValues.get("event", 0) + int(delta),
+    }
+    for key in ("total", "allTime", "allTimeShifts"):
+        rangeA1 = targetRanges.get(key, "")
+        if rangeA1:
+            updatesByRange[rangeA1] = currentValues.get(key, 0) + int(delta)
 
     service.spreadsheets().values().batchUpdate(
         spreadsheetId=sheetId,
         body={
             "valueInputOption": "USER_ENTERED",
-            "data": [{"range": cellRange, "values": [[newValue]]}],
+            "data": [
+                {"range": rangeA1, "values": [[value]]}
+                for rangeA1, value in updatesByRange.items()
+            ],
         },
     ).execute()
     _applyRowTextStyle(service, row)

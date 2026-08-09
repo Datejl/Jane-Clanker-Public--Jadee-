@@ -21,7 +21,10 @@ The mirror is basically a tiny archivist. It watches a source channel, parses Jo
   Destination channel Jane mirrors into.
 
 - `trainingLogBackfillDays`
-  Number of history days to scan on startup or manual backfill. Clamped to 7 through 365.
+  Number of history days to scan on startup or manual backfill. Clamped to 1 through 365.
+
+- `trainingLogStartupMirrorNewRows`
+  Whether restart backfill can mirror recent missing rows after Jane builds the archive index.
 
 - `trainingSummaryWebhookName`
   Webhook name for the summary panel.
@@ -104,7 +107,7 @@ Manual backfill uses:
 
 Backfill scans oldest-first after the cutoff date. Before creating any mirror messages, Jane scans the archive channel for existing mirror footers. If a source message ID is already present in the archive, Jane records that mirror ID and refuses to send the log again.
 
-Normal restart backfill does not create missing mirror messages. It only stores parsed rows, reconnects known mirror IDs, and keeps the summary panel at the bottom.
+Normal restart backfill can create missing mirror messages for recent rows when the archive index is available. If the archive index cannot be read, Jane still stores parsed rows but does not create mirror messages.
 
 Manual backfill can create missing mirror messages for source results that are not already in the archive index. If the archive scan fails, manual backfill still stores parsed rows, but it will not create mirror messages. That is intentional. Not duplicating a year's worth of logs is more important than guessing.
 
@@ -117,6 +120,8 @@ Progress is logged every 50 scanned messages.
 ## Stats Commands
 
 Training stats use stored rows from `training_result_logs`.
+
+Sheet export prep uses `training_result_export_state`. It resolves the host's Roblox username through Jane's stored identity cache first, then RoVer through the existing helper. Rows without a resolved host stay stored, but their export state is marked as blocked until the identity can be resolved.
 
 Supported text commands:
 

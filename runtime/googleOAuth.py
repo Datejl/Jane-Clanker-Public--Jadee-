@@ -72,8 +72,9 @@ def loadCredentials(
     resolvedTokenPath = Path(tokenPath) if tokenPath else defaultTokenPath()
     if not resolvedTokenPath.exists():
         raise FileNotFoundError(
-            "Google OAuth token file is missing. Set GOOGLE_OAUTH_TOKEN_PATH to an authorized "
-            f"Google OAuth user token JSON, or deploy the token to {resolvedTokenPath}."
+            "Google OAuth token file is missing. Set config.googleOauthTokenPath or "
+            "GOOGLE_OAUTH_TOKEN_PATH to an authorized Google OAuth user token JSON, "
+            f"or deploy the token to {resolvedTokenPath}."
         )
 
     scopeList = list(scopes)

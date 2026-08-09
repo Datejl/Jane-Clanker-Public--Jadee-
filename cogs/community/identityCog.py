@@ -695,7 +695,7 @@ class IdentityCog(commands.Cog):
             return []
 
         timeout = aiohttp.ClientTimeout(total=15)
-        headers = {"Authorization": f"Bearer {token}"}
+        headers = janeIdentity.relayRequestHeaders(token)
         url = self._relayEndpoint("/identity/api/pending.php")
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(url, headers=headers, params={"limit": str(self._relayBatchSize())}) as response:
@@ -716,10 +716,7 @@ class IdentityCog(commands.Cog):
         if not token or not janeIdentity.relayBaseUrl():
             return
         timeout = aiohttp.ClientTimeout(total=15)
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        }
+        headers = janeIdentity.relayRequestHeaders(token, jsonBody=True)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(
                 self._relayEndpoint("/identity/api/ack.php"),

@@ -8,6 +8,7 @@ from typing import Any, Awaitable, Callable, Optional
 import discord
 from discord import ui
 
+from features.staff.clockins import resolveAttendeeUserIdFromToken
 from runtime import permissions as runtimePermissions
 
 log = logging.getLogger(__name__)
@@ -415,6 +416,85 @@ class JoinPasswordModal(ui.Modal, title="Enter Password"):
         )
 
 
+class RemoveAttendeeModal(ui.Modal, title="Remove Attendee"):
+    attendee = ui.TextInput(
+        label="Attendee #, ID, or mention",
+        style=discord.TextStyle.short,
+        required=True,
+        max_length=120,
+        placeholder="Example: 3, @user, or 123456789",
+    )
+
+    def __init__(self, sessionId: int):
+        super().__init__()
+        self.sessionId = sessionId
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await _safeInteractionDefer(interaction, ephemeral=True)
+
+        if not interaction.guild or not isinstance(interaction.user, discord.Member):
+            return await _safeInteractionReply(
+                interaction,
+                content="This action can only be used inside a server channel.",
+                ephemeral=True,
+            )
+
+        session = await _getSessionOrRecoverFromMessage(interaction, self.sessionId)
+        if not session:
+            return await _safeInteractionReply(
+                interaction,
+                content="This orientation session could not be found.",
+                ephemeral=True,
+            )
+        if not _canManageSessionControls(interaction, session):
+            return await _safeInteractionReply(
+                interaction,
+                content="Only the session host or a server manager may remove clock-ins.",
+                ephemeral=True,
+            )
+
+        status = str(session.get("status") or "").upper()
+        if status in {"CANCELED", "FINISHED", "FINISHING", "GRADING"}:
+            return await _safeInteractionReply(
+                interaction,
+                content="This orientation is no longer open for clock-in changes.",
+                ephemeral=True,
+            )
+
+        attendees = await _service.getAttendees(self.sessionId)
+        targetUserId = resolveAttendeeUserIdFromToken(str(self.attendee.value), attendees)
+        if targetUserId is None:
+            return await _safeInteractionReply(
+                interaction,
+                content="I could not find that attendee. Use their attendee number, mention, or Discord ID.",
+                ephemeral=True,
+            )
+
+        await _service.removeAttendee(self.sessionId, int(targetUserId))
+        updatedAttendees = await _service.getAttendees(self.sessionId)
+        maxAttendeeLimit = _positiveInt(session.get("maxAttendeeLimit"))
+        if status == "FULL" and maxAttendeeLimit > 0 and len(updatedAttendees) < maxAttendeeLimit:
+            await _service.setStatus(self.sessionId, "OPEN")
+
+        await _updateSessionMessage(interaction.client, self.sessionId)
+        await _safeInteractionReply(
+            interaction,
+            content=f"Removed <@{int(targetUserId)}> from this orientation clock-in.",
+            ephemeral=True,
+        )
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+        log.error(
+            "Orientation remove attendee modal failed for session %s.",
+            self.sessionId,
+            exc_info=(type(error), error, error.__traceback__),
+        )
+        await _replyAfterControlError(
+            interaction,
+            "This orientation could not remove that clock-in right now. Please try again.",
+        )
+
+
 class SessionView(ui.View):
     def __init__(self, sessionId: int):
         super().__init__(timeout=None)
@@ -424,6 +504,7 @@ class SessionView(ui.View):
         self.gradeBtn.custom_id = f"session:grade:{sessionId}"
         self.finishBtn.custom_id = f"session:finish:{sessionId}"
         self.joinBtn.custom_id = f"session:join:{sessionId}"
+        self.removeBtn.custom_id = f"session:remove:{sessionId}"
 
     async def disableIfLocked(self):
         session = await _service.getSession(self.sessionId)
@@ -434,6 +515,8 @@ class SessionView(ui.View):
                 child.disabled = True
         if session["status"] in {"GRADING", "FULL", "FINISHING"}:
             self.joinBtn.disabled = True
+        if session["status"] in {"GRADING", "FINISHING"}:
+            self.removeBtn.disabled = True
 
     async def on_error(
         self,
@@ -616,6 +699,38 @@ class SessionView(ui.View):
         if not _canClockIn(interaction.user):
             return await _safeInteractionReply(interaction, _clockInDeniedMessage(), ephemeral=True)
         await _safeInteractionSendModal(interaction, JoinPasswordModal(sessionId))
+
+    @ui.button(label="Remove", style=discord.ButtonStyle.danger, row=1)
+    async def removeBtn(self, interaction: discord.Interaction, button: ui.Button):
+        if not interaction.guild or not isinstance(interaction.user, discord.Member):
+            return await _safeInteractionReply(
+                interaction,
+                "This action can only be used inside a server channel.",
+                ephemeral=True,
+            )
+        sessionId = _parseSessionId(button.custom_id)
+        session = await _getSessionOrRecoverFromMessage(interaction, sessionId)
+        if not session:
+            return await _safeInteractionReply(
+                interaction,
+                "This orientation session could not be found.",
+                ephemeral=True,
+            )
+        if not _canManageSessionControls(interaction, session):
+            return await _safeInteractionReply(
+                interaction,
+                "Only the session host or a server manager may remove clock-ins.",
+                ephemeral=True,
+            )
+
+        status = str(session.get("status") or "").upper()
+        if status in {"CANCELED", "FINISHED", "FINISHING", "GRADING"}:
+            return await _safeInteractionReply(
+                interaction,
+                "This orientation is no longer open for clock-in changes.",
+                ephemeral=True,
+            )
+        await _safeInteractionSendModal(interaction, RemoveAttendeeModal(sessionId))
 
 
 class GradingView(ui.View):

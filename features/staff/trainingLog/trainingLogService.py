@@ -8,6 +8,7 @@ from typing import Any, Optional
 import discord
 
 from db.sqlite import execute, fetchAll, fetchOne
+from features.staff.sessions.Roblox import robloxUsers
 from features.staff.trainingLog import parsing as trainingLogParsing
 from runtime import orgFeatureGate
 from runtime import orgProfiles
@@ -136,6 +137,22 @@ class TrainingLogCoordinator:
             maximum=5000,
         )
 
+    def _startupMirrorNewRowsForOrg(self, orgKey: str | None) -> bool:
+        configured = orgProfiles.getOrganizationValue(
+            self.config,
+            "trainingLogStartupMirrorNewRows",
+            orgKey=orgKey,
+            default=True,
+        )
+        if isinstance(configured, bool):
+            return configured
+        text = str(configured or "").strip().lower()
+        if text in {"0", "false", "no", "off", "disabled"}:
+            return False
+        if text in {"1", "true", "yes", "on", "enabled"}:
+            return True
+        return True
+
     def _archiveIndexLimitForOrg(self, orgKey: str | None) -> int | None:
         return self._historyLimitForOrg(
             "trainingLogArchiveIndexLimit",
@@ -230,6 +247,47 @@ class TrainingLogCoordinator:
             return True
         rowSourceGuildId = int(row.get("sourceGuildId") or 0)
         return rowSourceGuildId > 0 and rowSourceGuildId in set(profile.guildIds)
+
+    def _orgSqlFilters(self, orgKey: str | None, *, tableAlias: str = "") -> tuple[list[str], list[Any]]:
+        requestedOrg = str(orgKey or "").strip()
+        if not requestedOrg:
+            return [], []
+
+        profile = orgProfiles.getOrganizationProfile(self.config, orgKey=requestedOrg)
+        if profile is None:
+            return ["1 = 0"], []
+
+        prefix = f"{tableAlias}." if tableAlias else ""
+        filters: list[str] = []
+        params: list[Any] = []
+
+        sourceChannelId = self._sourceChannelIdForOrg(profile.key)
+        if sourceChannelId > 0:
+            filters.append(f"{prefix}sourceChannelId = ?")
+            params.append(int(sourceChannelId))
+
+        guildIds: list[int] = []
+        for value in list(getattr(profile, "guildIds", []) or []):
+            try:
+                guildId = int(value or 0)
+            except (TypeError, ValueError):
+                continue
+            if guildId > 0 and guildId not in guildIds:
+                guildIds.append(guildId)
+        if guildIds:
+            placeholders = ",".join("?" for _ in guildIds)
+            filters.append(f"{prefix}sourceGuildId IN ({placeholders})")
+            params.extend(guildIds)
+
+        if not filters:
+            return ["1 = 0"], []
+        return [f"({' OR '.join(filters)})"], params
+
+    @staticmethod
+    def _whereClause(filters: list[str]) -> str:
+        if not filters:
+            return ""
+        return " WHERE " + " AND ".join(f"({entry})" for entry in filters)
 
     def _authorLooksLikeJohn(self, message: discord.Message) -> bool:
         author = getattr(message, "author", None)
@@ -350,6 +408,122 @@ class TrainingLogCoordinator:
         await execute(
             "UPDATE training_result_logs SET mirrorChannelId = ?, mirrorMessageId = ? WHERE messageId = ?",
             (int(channelId), int(mirrorMessageId), int(messageId)),
+        )
+
+    async def _getExportState(self, messageId: int) -> dict[str, Any] | None:
+        return await fetchOne(
+            "SELECT * FROM training_result_export_state WHERE messageId = ?",
+            (int(messageId),),
+        )
+
+    def _exportStateNeedsRefresh(self, exportState: dict[str, Any] | None) -> bool:
+        if not isinstance(exportState, dict):
+            return True
+        status = str(exportState.get("hostResolveStatus") or "").strip().upper()
+        username = str(exportState.get("hostRobloxUsername") or "").strip()
+        return status != "RESOLVED" or not username
+
+    def _sourceMessageUrl(self, row: dict[str, Any]) -> str:
+        guildId = int(row.get("sourceGuildId") or 0)
+        channelId = int(row.get("sourceChannelId") or 0)
+        messageId = int(row.get("messageId") or 0)
+        if guildId <= 0 or channelId <= 0 or messageId <= 0:
+            return ""
+        return f"https://discord.com/channels/{guildId}/{channelId}/{messageId}"
+
+    def _displayEventTypeParts(
+        self,
+        *,
+        eventKind: str,
+        certType: str,
+        certVariant: str,
+        title: str = "",
+    ) -> str:
+        normalizedEventKind = str(eventKind or "").strip().upper()
+        normalizedCertType = str(certType or "").strip().upper()
+        normalizedVariant = str(certVariant or "").strip().upper()
+
+        if normalizedEventKind == "ORIENTATION" or normalizedCertType == "ORIENTATION":
+            return "Orientation"
+        if normalizedCertType == "GRID" and normalizedVariant == "TRAINING":
+            return "Grid Training"
+        if normalizedCertType == "GRID":
+            return "Grid Exam"
+        if normalizedCertType == "EMERGENCY" and normalizedVariant == "TRAINING":
+            return "Emergency Training"
+        if normalizedCertType == "EMERGENCY":
+            return "Emergency Exam"
+        if normalizedCertType == "TURBINE":
+            return "Turbine"
+        if normalizedCertType == "SOLO":
+            return "Solo"
+        if normalizedCertType == "SUPERVISOR":
+            return "Supervisor"
+        return str(title or "Unknown")
+
+    async def _resolveHostRobloxIdentity(
+        self,
+        message: discord.Message,
+        parsed: ParsedTrainingResult,
+    ) -> tuple[int | None, str, str, str]:
+        hostId = int(getattr(parsed, "hostId", 0) or 0)
+        if hostId <= 0:
+            return None, "", "NO_HOST", "No host Discord mention was parsed."
+
+        guildId = int(getattr(getattr(message, "guild", None), "id", 0) or 0)
+        try:
+            lookup = await robloxUsers.fetchRobloxUser(hostId, guildId if guildId > 0 else None)
+        except Exception as exc:
+            return None, "", "ERROR", f"{exc.__class__.__name__}: {exc}"
+
+        username = str(getattr(lookup, "robloxUsername", "") or "").strip()
+        try:
+            robloxUserId = int(getattr(lookup, "robloxId", 0) or 0) or None
+        except (TypeError, ValueError):
+            robloxUserId = None
+        if username:
+            return robloxUserId, username, "RESOLVED", ""
+        error = str(getattr(lookup, "error", "") or "No Roblox username resolved.").strip()
+        return robloxUserId, "", "UNRESOLVED", error
+
+    async def _prepareExportState(
+        self,
+        message: discord.Message,
+        parsed: ParsedTrainingResult,
+    ) -> None:
+        robloxUserId, robloxUsername, resolveStatus, resolveError = await self._resolveHostRobloxIdentity(message, parsed)
+        exportStatus = "READY" if str(robloxUsername or "").strip() else "HOST_UNRESOLVED"
+        await execute(
+            """
+            INSERT INTO training_result_export_state (
+                messageId,
+                hostRobloxUserId,
+                hostRobloxUsername,
+                hostResolveStatus,
+                hostResolveError,
+                exportStatus,
+                preparedAt,
+                updatedAt
+            )
+            VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            ON CONFLICT(messageId) DO UPDATE SET
+                hostRobloxUserId = excluded.hostRobloxUserId,
+                hostRobloxUsername = excluded.hostRobloxUsername,
+                hostResolveStatus = excluded.hostResolveStatus,
+                hostResolveError = excluded.hostResolveError,
+                exportStatus = excluded.exportStatus,
+                exportError = '',
+                preparedAt = excluded.preparedAt,
+                updatedAt = datetime('now')
+            """,
+            (
+                int(message.id),
+                robloxUserId,
+                str(robloxUsername or "").strip(),
+                str(resolveStatus or "").strip(),
+                str(resolveError or "").strip()[:500],
+                exportStatus,
+            ),
         )
 
     async def _persistSummaryMessage(
@@ -721,27 +895,12 @@ class TrainingLogCoordinator:
     def _displayEventType(self, parsed: ParsedTrainingResult | None) -> str:
         if parsed is None:
             return "Unknown"
-        eventKind = str(parsed.eventKind or "").strip().upper()
-        certType = str(parsed.certType or "").strip().upper()
-        certVariant = str(parsed.certVariant or "").strip().upper()
-
-        if eventKind == "ORIENTATION" or certType == "ORIENTATION":
-            return "Orientation"
-        if certType == "GRID" and certVariant == "TRAINING":
-            return "Grid Training"
-        if certType == "GRID":
-            return "Grid Exam"
-        if certType == "EMERGENCY" and certVariant == "TRAINING":
-            return "Emergency Training"
-        if certType == "EMERGENCY":
-            return "Emergency Exam"
-        if certType == "TURBINE":
-            return "Turbine"
-        if certType == "SOLO":
-            return "Solo"
-        if certType == "SUPERVISOR":
-            return "Supervisor"
-        return str(parsed.title or "Unknown")
+        return self._displayEventTypeParts(
+            eventKind=str(parsed.eventKind or ""),
+            certType=str(parsed.certType or ""),
+            certVariant=str(parsed.certVariant or ""),
+            title=str(parsed.title or ""),
+        )
 
     def _isRelevantSourceMessage(
         self,
@@ -823,6 +982,16 @@ class TrainingLogCoordinator:
             storedRow = await self._getStoredLog(sourceMessageId)
             if storedRow is None:
                 return False
+            try:
+                exportState = await self._getExportState(sourceMessageId)
+                if rowChanged or self._exportStateNeedsRefresh(exportState):
+                    await self._prepareExportState(message, parsed)
+            except Exception:
+                log.exception(
+                    "Training export preparation failed: org=%s messageId=%s.",
+                    resolvedOrgKey,
+                    sourceMessageId,
+                )
 
             archivedMirrorMessageId = 0
             if archiveMirrorIndex is not None:
@@ -869,15 +1038,104 @@ class TrainingLogCoordinator:
     async def handleSourceMessage(self, message: discord.Message) -> bool:
         return await self._captureRelevantMessage(message, refreshSummary=True)
 
-    async def _fetchStoredRows(self, *, hostId: int | None = None) -> list[dict[str, Any]]:
+    async def _fetchStoredRows(self, *, hostId: int | None = None, orgKey: str | None = None) -> list[dict[str, Any]]:
+        filters, params = self._orgSqlFilters(orgKey)
         if hostId is not None and int(hostId or 0) > 0:
-            return await fetchAll(
-                "SELECT * FROM training_result_logs WHERE hostId = ? ORDER BY datetime(sourceCreatedAt) DESC",
-                (int(hostId),),
-            )
+            filters.append("hostId = ?")
+            params.append(int(hostId))
         return await fetchAll(
-            "SELECT * FROM training_result_logs ORDER BY datetime(sourceCreatedAt) DESC",
+            "SELECT * FROM training_result_logs"
+            f"{self._whereClause(filters)} "
+            "ORDER BY datetime(sourceCreatedAt) DESC",
+            tuple(params),
         )
+
+    async def listTrainingExportRows(
+        self,
+        *,
+        orgKey: str | None = None,
+        onlyReady: bool = False,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        safeLimit: int | None = None
+        if limit is not None:
+            try:
+                safeLimit = max(0, int(limit or 0))
+            except (TypeError, ValueError):
+                safeLimit = None
+            if safeLimit is not None and safeLimit <= 0:
+                return []
+        filters, params = self._orgSqlFilters(orgKey, tableAlias="logs")
+        if onlyReady:
+            filters.append("UPPER(COALESCE(exports.exportStatus, 'PENDING')) = 'READY'")
+        limitClause = ""
+        if safeLimit is not None:
+            limitClause = " LIMIT ?"
+            params.append(int(safeLimit))
+
+        rows = await fetchAll(
+            f"""
+            SELECT
+                logs.messageId,
+                logs.sourceGuildId,
+                logs.sourceChannelId,
+                logs.sourceAuthorId,
+                logs.sourceCreatedAt,
+                logs.eventKind,
+                logs.certType,
+                logs.certVariant,
+                logs.title,
+                logs.hostId,
+                logs.hostText,
+                logs.passCount,
+                logs.failCount,
+                logs.mirrorChannelId,
+                logs.mirrorMessageId,
+                logs.rawContent,
+                exports.hostRobloxUserId,
+                exports.hostRobloxUsername,
+                exports.hostResolveStatus,
+                exports.hostResolveError,
+                exports.exportStatus,
+                exports.preparedAt,
+                exports.exportedAt,
+                exports.exportError,
+                exports.sheetRowNumber
+            FROM training_result_logs AS logs
+            LEFT JOIN training_result_export_state AS exports
+                ON exports.messageId = logs.messageId
+            {self._whereClause(filters)}
+            ORDER BY datetime(logs.sourceCreatedAt) DESC, logs.messageId DESC
+            {limitClause}
+            """,
+            tuple(params),
+        )
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            exportStatus = str(row.get("exportStatus") or "PENDING").strip().upper()
+            passCount = int(row.get("passCount") or 0)
+            failCount = int(row.get("failCount") or 0)
+            attendeeCount = max(0, passCount + failCount)
+            item = dict(row)
+            item.update(
+                {
+                    "eventTypeLabel": self._displayEventTypeParts(
+                        eventKind=str(row.get("eventKind") or ""),
+                        certType=str(row.get("certType") or ""),
+                        certVariant=str(row.get("certVariant") or ""),
+                        title=str(row.get("title") or ""),
+                    ),
+                    "attendeeCount": attendeeCount,
+                    "passerCount": passCount,
+                    "passerAttendeeText": f"{passCount}/{attendeeCount}",
+                    "sourceMessageUrl": self._sourceMessageUrl(row),
+                    "exportStatus": exportStatus,
+                    "hostResolveStatus": str(row.get("hostResolveStatus") or "PENDING").strip().upper(),
+                    "hostRobloxUsername": str(row.get("hostRobloxUsername") or "").strip(),
+                }
+            )
+            out.append(item)
+        return out
 
     def _statsKeyForRow(self, row: dict[str, Any]) -> str:
         certType = str(row.get("certType") or "").strip().upper()
@@ -981,11 +1239,7 @@ class TrainingLogCoordinator:
             return
 
         async with self._summaryLock:
-            rows = [
-                row
-                for row in await self._fetchStoredRows()
-                if self._rowBelongsToOrg(row, str(orgKey))
-            ]
+            rows = await self._fetchStoredRows(orgKey=str(orgKey))
             now = datetime.now(timezone.utc)
             cutoff = now - timedelta(days=7)
 
@@ -1155,6 +1409,9 @@ class TrainingLogCoordinator:
 
                 cutoff = now - timedelta(days=self._backfillDaysForOrg(orgKey))
                 messageLimit = None if force else self._startupBackfillMessageLimitForOrg(orgKey)
+                mirrorNewRows = bool(force) or (
+                    archiveMirrorIndex is not None and self._startupMirrorNewRowsForOrg(orgKey)
+                )
                 scannedCount = 0
                 capturedCount = 0
                 failedCount = 0
@@ -1171,7 +1428,7 @@ class TrainingLogCoordinator:
                                 refreshSummary=False,
                                 orgKey=orgKey,
                                 archiveMirrorIndex=archiveMirrorIndex,
-                                mirrorNewRows=bool(force),
+                                mirrorNewRows=mirrorNewRows,
                                 mirrorExistingRows=False,
                                 mirrorWhenArchiveIndexUnavailable=False,
                             )

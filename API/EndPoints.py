@@ -1,111 +1,100 @@
-import json
-import os
-import asyncio
-from asyncio import AbstractEventLoop
+from __future__ import annotations
+
+import hmac
+import logging
 from typing import Any
 
 import discord
-from quart import request, abort, Response
+from quart import Quart, Response, jsonify, request
 
-from features.staff.sessions.viewRuntime import requestSessionMessageUpdate
-from runtime.entrypoint import app
 from features.staff.sessions.service import attemptClockIn
-
-realToken = os.getenv("JANE_FLASK_API_TOKEN")
-apiBotClient: discord.Client | None = None
+from features.staff.sessions.viewRuntime import requestSessionMessageUpdate
 
 
-def setApiBotClient(botClient: discord.Client | None) -> None:
-    global apiBotClient
-    apiBotClient = botClient
+log = logging.getLogger(__name__)
 
-def validateToken(requestToken) -> bool:
-    if requestToken is None:
-        return False
-    if requestToken != realToken:
-        return False
-    if not requestToken:
-        return False
-    return True
+_apiBotClient: discord.Client | None = None
+_apiToken = ""
 
 
-def safelyGetOrientationId(requestData) -> int:
-    if requestData is None:
+def configureApi(*, botClient: discord.Client | None, token: str) -> None:
+    global _apiBotClient, _apiToken
+    _apiBotClient = botClient
+    _apiToken = str(token or "").strip()
+
+
+def validateToken(requestToken: object) -> bool:
+    candidate = str(requestToken or "").strip()
+    return bool(_apiToken and candidate and hmac.compare_digest(candidate, _apiToken))
+
+
+def _positiveInt(value: object) -> int:
+    if isinstance(value, bool):
         return 0
-    if requestData["sessionId"] is None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
         return 0
-    if type(requestData["sessionId"]) != int:
-        return 0
-    if requestData["sessionId"] < 0:
-        return 0
-    return requestData["sessionId"]
+    return parsed if parsed > 0 else 0
 
-def safelyGetPassword(requestData) -> str:
-    if requestData is None:
-        return ""
-    if requestData["sessionPassword"] is None:
-        return ""
-    if type(requestData["sessionPassword"]) != str:
-        return ""
-    return requestData["sessionPassword"]
 
-def safelyGetUserId(requestData) -> int:
-    if requestData is None:
-        return 0
-    if requestData["sessionUserId"] is None:
-        return 0
-    if requestData["sessionUserId"] <= 0:
-        return 0
-    if type(requestData["sessionUserId"]) != int:
-        return 0
-    return requestData["sessionUserId"]
-
-def safelyGetBotClient(possibleBotClient) -> discord.Client | None:
-    candidate = possibleBotClient or apiBotClient
-    if candidate is None:
+def parseClockInPayload(requestData: object) -> tuple[int, str, int] | None:
+    if not isinstance(requestData, dict):
         return None
-    return candidate
 
-@app.post("/enterOrientation")
-async def enterOrientation():
-    token = request.headers.get("X-API-TOKEN")
-    if not validateToken(token):
-        abort(code=403)
+    sessionId = _positiveInt(requestData.get("sessionId"))
+    userId = _positiveInt(requestData.get("sessionUserId"))
+    rawPassword = requestData.get("sessionPassword")
+    password = rawPassword if isinstance(rawPassword, str) else ""
+    if sessionId <= 0 or userId <= 0 or not password:
+        return None
+    return sessionId, password, userId
 
-    sessionId = safelyGetOrientationId(await request.get_json())
-    if sessionId == 0:
-        abort(code=400)
-    password = safelyGetPassword(await request.get_json())
-    if password == "":
-        abort(code=400)
-    userId = safelyGetUserId(await request.get_json())
-    if userId == 0:
-        abort(code=400)
 
-    discordBotClient = safelyGetBotClient(None)
-    if discordBotClient is None:
-        abort(code=418)
+async def enterOrientation() -> Response:
+    if not validateToken(request.headers.get("X-API-TOKEN")):
+        return jsonify({"ok": False, "error": "unauthorized"}), 403
+
+    requestData = await request.get_json(silent=True)
+    parsed = parseClockInPayload(requestData)
+    if parsed is None:
+        return jsonify({"ok": False, "error": "invalid-request"}), 400
+    sessionId, password, userId = parsed
+
+    if _apiBotClient is None:
+        return jsonify({"ok": False, "error": "discord-client-unavailable"}), 503
 
     clockInResult = await attemptClockIn(sessionId, userId, password)
-
     resultText = str(clockInResult.get("status") or "").upper()
-
-    response = Response(status=418,response=json.dumps(
-        {
-            "result": resultText,
-            "attendees":clockInResult.get("attendeeCount")
-        }
-    ))
+    responseBody: dict[str, Any] = {
+        "ok": resultText == "ADDED",
+        "result": resultText,
+        "attendees": clockInResult.get("attendeeCount"),
+    }
 
     if resultText == "ADDED":
         try:
             await requestSessionMessageUpdate(
-                bot=discordBotClient,
+                bot=_apiBotClient,
                 sessionId=sessionId,
-                delaySec=0.5
+                delaySec=0.5,
             )
-        except Exception as e:
-            print(f"Error occured: {repr(e)}")
+        except Exception:
+            log.exception(
+                "Orientation API could not schedule a message refresh for session %s.",
+                sessionId,
+            )
+        return jsonify(responseBody), 200
 
-        response.status_code = 200
-    return response
+    # Preserve the legacy endpoint's non-success status for existing clients.
+    return jsonify(responseBody), 418
+
+
+def registerRoutes(app: Quart) -> None:
+    if "enterOrientation" not in app.view_functions:
+        app.add_url_rule(
+            "/enterOrientation",
+            endpoint="enterOrientation",
+            view_func=enterOrientation,
+            methods=["POST"],
+        )

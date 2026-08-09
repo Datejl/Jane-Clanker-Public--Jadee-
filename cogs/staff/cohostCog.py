@@ -146,6 +146,21 @@ class CohostCog(commands.Cog):
         self.bot.add_view(CohostView(self))
         await self._restoreOpenRequests()
 
+    async def cog_unload(self) -> None:
+        tasks = {
+            request.autoTask
+            for request in self.requests.values()
+            if request.autoTask is not None and not request.autoTask.done()
+        }
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        for request in self.requests.values():
+            request.autoTask = None
+        self.requests.clear()
+        self._finalizeLocks.clear()
+
     @app_commands.command(name="cohost", description="Pick cohosts from a join list.")
     @app_commands.choices(event=eventChoices)
     @app_commands.describe(
@@ -369,15 +384,20 @@ class CohostCog(commands.Cog):
         request.autoTask = asyncio.create_task(self._autoFinish(request.messageId, delay))
 
     async def _autoFinish(self, messageId: int, delay: float) -> None:
-        if delay > 0:
-            await asyncio.sleep(delay)
-        request = await self._getRequest(messageId)
-        if not request or request.status != "OPEN":
-            return
+        request: CohostRequest | None = None
         try:
-            await self._finalizeRequest(messageId)
-        except Exception:
-            log.exception("Auto-finish failed for cohost request messageId=%d", messageId)
+            if delay > 0:
+                await asyncio.sleep(delay)
+            request = await self._getRequest(messageId)
+            if not request or request.status != "OPEN":
+                return
+            try:
+                await self._finalizeRequest(messageId)
+            except Exception:
+                log.exception("Auto-finish failed for cohost request messageId=%d", messageId)
+        finally:
+            if request is not None and request.autoTask is asyncio.current_task():
+                request.autoTask = None
 
     async def _setStatus(self, request: CohostRequest, status: str) -> None:
         finishedAt = None
@@ -389,8 +409,14 @@ class CohostCog(commands.Cog):
         )
         request.status = status
         request.finishedAt = _parseDbTime(finishedAt) if finishedAt else None
-        if status != "OPEN" and request.autoTask and not request.autoTask.done():
-            request.autoTask.cancel()
+        autoTask = request.autoTask
+        if (
+            status != "OPEN"
+            and autoTask is not None
+            and autoTask is not asyncio.current_task()
+            and not autoTask.done()
+        ):
+            autoTask.cancel()
 
     async def _safeChannelSend(
         self,

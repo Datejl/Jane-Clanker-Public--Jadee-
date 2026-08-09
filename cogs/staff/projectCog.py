@@ -23,7 +23,7 @@ from runtime import textFormatting as textFormattingRuntime
 log = logging.getLogger(__name__)
 
 _SERVER_NOT_RECOGNIZED_MESSAGE = (
-    "Server not recognized. Please reach out to a_very_tired_potato for assistance."
+    "Server not recognized. Please reach out to @AlexYikes for assistance."
 )
 _PROJECT_ACTIVE_STATUSES = {"PENDING_APPROVAL", "APPROVED", "SUBMITTED"}
 _THREAD_NAME_SANITIZER = re.compile(r"[^a-z0-9-]+")

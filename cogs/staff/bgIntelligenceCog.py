@@ -79,6 +79,15 @@ def _bgIntelReportChannelId() -> int:
         return 0
 
 
+def _bgIntelSheetCredentialSkipReason(exc: Exception) -> str:
+    message = str(exc or "").strip()
+    if isinstance(exc, FileNotFoundError) and "Google OAuth" in message:
+        return "Google OAuth token is missing on this deployment."
+    if isinstance(exc, RuntimeError) and message.startswith("Google OAuth token"):
+        return message
+    return ""
+
+
 async def _resolveBgIntelReportChannel(
     client: discord.Client,
     *,
@@ -114,7 +123,13 @@ async def _updateBgIntelSheetLinkSafe(
             messageUrl=messageUrl,
             guildId=int(guildId or 0),
         )
-    except Exception:
+    except Exception as exc:
+        credentialReason = _bgIntelSheetCredentialSkipReason(exc)
+        if credentialReason:
+            log.warning("BG intelligence sheet update skipped: %s", credentialReason)
+            return bgSpreadsheetQueue.BgIntelSheetUpdateResult(
+                reason=f"{credentialReason} Jane Intel sheet link update skipped."
+            )
         log.exception("BG intelligence sheet update failed.")
         return bgSpreadsheetQueue.BgIntelSheetUpdateResult(reason="Sheet update failed internally.")
 

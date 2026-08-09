@@ -340,9 +340,8 @@ async def _safeInteractionEditMessage(
     if not hasattr(self, "_original_response") or self._original_response is None: # works only if the interaction reffers to message creation, not if the interaction is for example button click
         try:
             self._original_response = await interaction.original_response()
-        except:
+        except Exception:
             self._original_response = None
-            pass
 
     try:
         await self._original_response.edit(**kwargs)

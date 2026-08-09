@@ -296,7 +296,7 @@ def _sanitizeExportedConfig(targetRoot: Path) -> None:
         for envVar in ("BGC_SPREADSHEET_TEMPLATE_ID", "BGC_SPREADSHEET_FOLDER_ID"):
             source = re.sub(
                 rf'("{re.escape(envVar)}",\s*\n\s*)"(?:[^"\\]|\\.)*"',
-                rf'\1""',
+                r'\1""',
                 source,
             )
         source = re.sub(

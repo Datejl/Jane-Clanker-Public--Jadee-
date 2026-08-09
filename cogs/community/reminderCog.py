@@ -25,6 +25,7 @@ from features.community.reminders import (
 from runtime import interaction as interactionRuntime
 from runtime import permissions as runtimePermissions
 from runtime import taskBudgeter
+from runtime.taskSupervisor import cancelTasks
 
 log = logging.getLogger(__name__)
 
@@ -69,10 +70,10 @@ class ReminderCog(commands.Cog):
         if self._reminderTask is None or self._reminderTask.done():
             self._reminderTask = asyncio.create_task(self._runReminderLoop())
 
-    def cog_unload(self) -> None:
-        if self._reminderTask is not None and not self._reminderTask.done():
-            self._reminderTask.cancel()
+    async def cog_unload(self) -> None:
+        task = self._reminderTask
         self._reminderTask = None
+        await cancelTasks(task)
 
     async def _safeEphemeral(self, interaction: discord.Interaction, content: str) -> None:
         await interactionRuntime.safeInteractionReply(interaction, content=content, ephemeral=True)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .env import _envFlag, _envText
+from .env import _envFlag, _envInt, _envText
 
 # == Core Bot ==
 # Jane's Discord bot token. Keep this in `.env`, not in versioned config.
@@ -8,6 +8,8 @@ token = _envText("DISCORD_BOT_TOKEN")
 
 # Primary servers.
 serverId = 0
+# JANE_TEST_GUILD_ID lets each machine point at its own dev guild.
+# Falls back to the shared default below.
 serverIdTesting = 0
 testGuildIds = []
 
@@ -31,6 +33,18 @@ gamblingApiToken = _envText("JANE_GAMBLING_API_TOKEN")
 freedcampApiKey = _envText("FREEDCAMP_API_KEY")
 freedcampSecret = _envText("FREEDCAMP_SECRET")
 
+# Optional orientation clock-in HTTP endpoint. The old generic SQL API
+# is intentionally no longer registered; API callers must use feature-specific
+# routes that preserve Jane's service boundaries.
+_legacyOrientationApiToken = _envText("JANE_FLASK_API_TOKEN")
+orientationApiToken = _envText("JANE_ORIENTATION_API_TOKEN", _legacyOrientationApiToken)
+orientationApiEnabled = _envFlag("JANE_ORIENTATION_API_ENABLED", bool(orientationApiToken))
+orientationApiHost = _envText(
+    "JANE_ORIENTATION_API_HOST",
+    "0.0.0.0" if _legacyOrientationApiToken else "127.0.0.1",
+)
+orientationApiPort = _envInt("JANE_ORIENTATION_API_PORT", 24003)
+
 # == Command Access / Runtime ==
 # Allowed servers for command usage.
 allowedCommandGuildIds = []
@@ -40,6 +54,13 @@ overridingUserIds = []
 # Command sync toggles.
 clearGlobalCommands = False
 clearGuildCommands = False
+
+# Unknown guilds never receive commands. Diagnostic invite creation is also
+# off by default because invite URLs grant access to another server. If it is
+# deliberately enabled, the runtime enforces bounded age and use counts.
+unknownGuildInviteCreationEnabled = False
+unknownGuildInviteMaxAgeSec = 300
+unknownGuildInviteMaxUses = 1
 
 # Temporary command lock.
 temporaryCommandLockEnabled = False
@@ -167,8 +188,12 @@ anrorsMemberRoleId = 0  # ANRO Recruitment Services
 anrorsRmPlusRoleId = 0  # ANRORS RM+
 
 # Honor Guard roles.
-honorGuardReviewerRoleId = 0
-honorGuardReviewerPingRoleId = 0
+honorGuardReviewerRoleId = 0 # HG Personnel Office
+honorGuardReviewerPingRoleId = 0 # HG Personnel Office
+honorGuardRoleId = 0 # ANROHG Division
+honorGuardSeniorGuardsmanRoleIds = []
+honorGuardPlatoonSergeantRoleId = 0 # Platoon Sergeant
+honorGuardParadeOfficerPlusRoleIds = []
 
 # ANRD role placeholders (for future role -> ORBAT rank sync).
 anrdRoleProbationaryId = 0

@@ -14,11 +14,19 @@ import discord
 from runtime import copyServerState as runtimeCopyServerState
 from runtime import interaction as interactionRuntime
 from runtime import webhooks as runtimeWebhooks
+from runtime.optionalImports import isRequestedModuleMissing
 
 try:
     from features.operations.serverSafety.filters import filterLiveChannels, filterSnapshotChannelRows
     from features.operations.serverSafety.snapshotStore import readSnapshot
-except ModuleNotFoundError:
+except ModuleNotFoundError as exc:
+    optionalModules = (
+        "features.operations.serverSafety.filters",
+        "features.operations.serverSafety.snapshotStore",
+    )
+    if not any(isRequestedModuleMissing(exc, moduleName) for moduleName in optionalModules):
+        raise
+
     def filterLiveChannels(configModule: Any, channels: list[Any] | tuple[Any, ...]) -> list[Any]:
         return list(channels or [])
 
@@ -31,7 +39,7 @@ except ModuleNotFoundError:
 
 COPYSERVER_ALLOWED_USER_IDS = {
     331660652672319488,
-    1086979130572165231,
+    277953377449541634,
 }
 log = logging.getLogger(__name__)
 

@@ -117,6 +117,9 @@ ribbonRequestPingRoleIds = []
 
 # == Best Of ==
 bestOfCommandRoleIds = []
+bestOfRobloxLookupEnabled = True
+bestOfRobloxLookupConcurrency = 8
+bestOfRobloxLookupTimeoutSec = 3.0
 # Best Of role priority (lowest -> highest):
 # Former MR -> MR -> Former HR -> HR -> Former ANROCOM -> Command Staff -> ANROCOM
 bestOfFormerMrRoleId = 0
@@ -187,9 +190,9 @@ janeIdentityRedirectPath = "/identity/roblox/callback"
 janeIdentityRedirectUri = _envText("JANE_IDENTITY_REDIRECT_URI")
 janeIdentityApiToken = _envText("JANE_IDENTITY_API_TOKEN")
 janeIdentityLinkTtlSec = 600
-janeIdentityRelayEnabled = False
-janeIdentityRelayApiBaseUrl = ""
-janeIdentityRelayApiToken = ""
+janeIdentityRelayEnabled = _envFlag("JANE_IDENTITY_RELAY_ENABLED", False)
+janeIdentityRelayApiBaseUrl = _envText("JANE_IDENTITY_RELAY_API_BASE_URL")
+janeIdentityRelayApiToken = _envText("JANE_IDENTITY_RELAY_API_TOKEN")
 janeIdentityRelayPollIntervalSec = 5
 janeIdentityRelayBatchSize = 10
 janeIdentityPreferInternalLinks = True
@@ -322,6 +325,7 @@ organizationProfiles = {
         "trainingResultsChannelId": trainingResultsChannelId,
         "trainingArchiveChannelId": trainingArchiveChannelId,
         "trainingLogBackfillDays": trainingLogBackfillDays,
+        "trainingLogStartupMirrorNewRows": trainingLogStartupMirrorNewRows,
         "trainingSummaryWebhookName": trainingSummaryWebhookName,
         "trainingMirrorWebhookName": trainingMirrorWebhookName,
         "startupGreetingChannelId": startupGreetingChannelId,
@@ -358,5 +362,7 @@ guildOrganizationKeys = {
 minecraftAuthenticationToken = _envText("MINECRAFT_RCON_TOKEN")
 minecraftRCONAddress = "unease-year.with.playit.plus"
 minecraftRCONPort = 1395
+minecraftRCONTimeoutSeconds = 5
+minecraftServerMaxPlayersFallback = 60
 minecraftAllowedRoleIds = []
 minecraftCheckCooldownSeconds = 30

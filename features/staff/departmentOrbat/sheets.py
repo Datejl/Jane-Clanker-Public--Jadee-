@@ -20,6 +20,7 @@ from features.staff.departmentOrbat.sectionHeaders import (
 from features.staff.recruitment import sheets as recruitmentSheets
 from features.staff.orbat.a1 import columnIndex
 from features.staff.orbat.multiEngine import getMultiOrbatEngine
+from runtime import transientNetwork
 
 
 _engine = getMultiOrbatEngine()
@@ -27,15 +28,10 @@ log = logging.getLogger(__name__)
 
 
 def _isGoogleRateLimitError(exc: Exception) -> bool:
-    current: Exception | None = exc
-    while current is not None:
-        resp = getattr(current, "resp", None)
-        status = getattr(resp, "status", None)
-        if status == 429 or getattr(current, "status_code", None) == 429:
-            return True
-        current = current.__cause__ if isinstance(current.__cause__, Exception) else None
-    errorText = str(exc or "").upper()
-    return "RATE_LIMIT_EXCEEDED" in errorText or "QUOTA EXCEEDED" in errorText
+    return (
+        transientNetwork.exceptionHasRateLimitHttpStatus(exc)
+        or transientNetwork.textLooksLikeRateLimitError(exc)
+    )
 
 
 def _runWithRateLimitRetry(label: str, fn) -> tuple[Any, Optional[Exception]]:

@@ -136,7 +136,7 @@ class GitUpdatePreservePathTests(unittest.TestCase):
 
         self.assertFalse(coordinator._installRequirementsOnUpdate())
 
-    def test_requirements_install_command_breaks_system_packages(self):
+    def test_requirements_install_command_uses_normal_venv_pip(self):
         coordinator = gitUpdate.GitUpdateCoordinator(
             botClient=_Dummy(),
             configModule=_Dummy(),
@@ -146,12 +146,13 @@ class GitUpdatePreservePathTests(unittest.TestCase):
             auditStream=None,
         )
 
-        command = coordinator._pipInstallRequirementsCommand(Path("requirements.txt"))
+        with patch.object(coordinator, "_pipNeedsSystemPackageOverride", return_value=False):
+            command = coordinator._pipInstallRequirementsCommand(Path("requirements.txt"))
 
-        self.assertIn("--break-system-packages", command)
+        self.assertNotIn("--break-system-packages", command)
         self.assertEqual(command[-2:], ["-r", "requirements.txt"])
 
-    def test_requirements_install_environment_breaks_system_packages(self):
+    def test_requirements_install_supports_externally_managed_linux_python(self):
         coordinator = gitUpdate.GitUpdateCoordinator(
             botClient=_Dummy(),
             configModule=_Dummy(),
@@ -161,7 +162,12 @@ class GitUpdatePreservePathTests(unittest.TestCase):
             auditStream=None,
         )
 
-        self.assertEqual(coordinator._pipInstallEnvironment()["PIP_BREAK_SYSTEM_PACKAGES"], "1")
+        with patch.object(coordinator, "_pipNeedsSystemPackageOverride", return_value=True):
+            command = coordinator._pipInstallRequirementsCommand(Path("requirements.txt"))
+            environment = coordinator._pipInstallEnvironment()
+
+        self.assertIn("--break-system-packages", command)
+        self.assertEqual(environment["PIP_BREAK_SYSTEM_PACKAGES"], "1")
 
 
 class GitUpdateManualRestartTests(unittest.TestCase):
@@ -186,7 +192,7 @@ class GitUpdateManualRestartTests(unittest.TestCase):
 
 
 class GitUpdateManualRestartFlowTests(unittest.IsolatedAsyncioTestCase):
-    async def test_disabled_manual_pull_cancels_restart(self):
+    async def test_disabled_manual_pull_restarts_without_pull(self):
         coordinator = gitUpdate.GitUpdateCoordinator(
             botClient=_Dummy(),
             configModule=_ManualRestartDisabledConfig(),
@@ -198,11 +204,12 @@ class GitUpdateManualRestartFlowTests(unittest.IsolatedAsyncioTestCase):
 
         result = await coordinator.runManualRestartFlow()
 
-        self.assertEqual(result["action"], "cancel-restart")
+        self.assertEqual(result["action"], "restart-only")
         self.assertEqual(result["gitOutcome"], "skipped")
         self.assertIn("Git pull on restart is disabled", result["message"])
+        self.assertIn("Restarting Jane without pulling", result["message"])
 
-    async def test_no_pending_update_cancels_restart(self):
+    async def test_no_pending_update_restarts_without_pull(self):
         class UpToDateCoordinator(gitUpdate.GitUpdateCoordinator):
             async def _inspectUpdateState(self) -> dict:
                 return {
@@ -225,11 +232,12 @@ class GitUpdateManualRestartFlowTests(unittest.IsolatedAsyncioTestCase):
 
         result = await coordinator.runManualRestartFlow()
 
-        self.assertEqual(result["action"], "cancel-restart")
+        self.assertEqual(result["action"], "restart-only")
         self.assertEqual(result["gitOutcome"], "not-needed")
         self.assertIn("No GitHub code changes", result["message"])
+        self.assertIn("Restarting Jane without pulling", result["message"])
 
-    async def test_failed_manual_restart_check_cancels_restart(self):
+    async def test_failed_manual_restart_check_restarts_without_pull(self):
         class FailingInspectCoordinator(gitUpdate.GitUpdateCoordinator):
             async def _inspectUpdateState(self) -> dict:
                 raise RuntimeError("git fetch failed")
@@ -246,12 +254,13 @@ class GitUpdateManualRestartFlowTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(gitUpdate.log, "exception") as exceptionLog:
             result = await coordinator.runManualRestartFlow()
 
-        self.assertEqual(result["action"], "cancel-restart")
-        self.assertEqual(result["gitOutcome"], "failed")
-        self.assertIn("Restart canceled", result["message"])
+        self.assertEqual(result["action"], "restart-only")
+        self.assertEqual(result["gitOutcome"], "skipped")
+        self.assertIn("Git check failed", result["message"])
+        self.assertIn("Restarting Jane without pulling", result["message"])
         exceptionLog.assert_called_once()
 
-    async def test_failed_manual_update_apply_cancels_restart(self):
+    async def test_failed_manual_update_apply_restarts_when_nothing_was_pulled(self):
         class FailingApplyCoordinator(gitUpdate.GitUpdateCoordinator):
             async def _buildManualRestartPlan(self) -> dict:
                 return {
@@ -277,9 +286,12 @@ class GitUpdateManualRestartFlowTests(unittest.IsolatedAsyncioTestCase):
 
         result = await coordinator.runManualRestartFlow()
 
-        self.assertEqual(result["action"], "cancel-restart")
-        self.assertEqual(result["gitOutcome"], "failed")
-        self.assertEqual(result["message"], "Git update failed: local state changed.")
+        self.assertEqual(result["action"], "restart-only")
+        self.assertEqual(result["gitOutcome"], "skipped")
+        self.assertEqual(
+            result["message"],
+            "Git update failed: local state changed. Restarting Jane without applying GitHub changes.",
+        )
 
     async def test_successful_code_update_signals_api_shutdown_before_closing_bot(self):
         class SuccessfulApplyCoordinator(gitUpdate.GitUpdateCoordinator):

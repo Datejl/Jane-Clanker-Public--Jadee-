@@ -2,23 +2,13 @@ import threading
 import time
 
 import config
+from runtime import transientNetwork
 
 
 _installLock = threading.Lock()
 _isInstalled = False
 _rateLock = threading.Lock()
 _nextAllowedAt = 0.0
-
-
-def _isRateLimitError(exc: Exception) -> bool:
-    current: Exception | None = exc
-    while current is not None:
-        resp = getattr(current, "resp", None)
-        status = getattr(resp, "status", None)
-        if status == 429 or getattr(current, "status_code", None) == 429:
-            return True
-        current = current.__cause__ if isinstance(current.__cause__, Exception) else None
-    return False
 
 
 def _reserveRateSlot() -> None:
@@ -55,11 +45,10 @@ def installGoogleSheetsRuntime() -> None:
                 try:
                     return originalExecute(request, *args, **kwargs)
                 except Exception as exc:
-                    if not _isRateLimitError(exc) or attempt >= maxAttempts:
+                    if not transientNetwork.isRetryableHttpOrNetworkError(exc) or attempt >= maxAttempts:
                         raise
                     time.sleep(retryBaseSec * attempt)
             return originalExecute(request, *args, **kwargs)
 
         HttpRequest.execute = patchedExecute
         _isInstalled = True
-

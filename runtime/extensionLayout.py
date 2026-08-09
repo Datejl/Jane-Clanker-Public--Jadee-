@@ -4,6 +4,8 @@ import importlib
 import logging
 from typing import Any
 
+from runtime.optionalImports import isRequestedModuleMissing
+
 
 log = logging.getLogger(__name__)
 
@@ -57,11 +59,18 @@ def _dedupeExtensionNames(extensionNames: list[str]) -> list[str]:
 def _loadOptionalExtensionNames(moduleName: str) -> list[str]:
     try:
         module = importlib.import_module(moduleName)
-    except ModuleNotFoundError:
-        return []
+    except ModuleNotFoundError as exc:
+        if isRequestedModuleMissing(exc, moduleName):
+            return []
+        log.exception(
+            "Optional extension list module %s has a missing dependency %s.",
+            moduleName,
+            exc.name,
+        )
+        raise
     except Exception:
         log.exception("Failed to import optional extension list module %s.", moduleName)
-        return []
+        raise
 
     rawExtensionNames = getattr(module, "extensionNames", [])
     if not isinstance(rawExtensionNames, (list, tuple, set)):

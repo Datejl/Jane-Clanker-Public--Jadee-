@@ -84,6 +84,17 @@ def relayApiToken() -> str:
     return explicit or str(getattr(config, "janeIdentityApiToken", "") or "").strip()
 
 
+def relayRequestHeaders(token: str, *, jsonBody: bool = False) -> dict[str, str]:
+    cleanToken = str(token or "").strip()
+    headers = {
+        "Authorization": f"Bearer {cleanToken}",
+        "X-Jane-Identity-Token": cleanToken,
+    }
+    if jsonBody:
+        headers["Content-Type"] = "application/json"
+    return headers
+
+
 def _redirectPath() -> str:
     path = str(getattr(config, "janeIdentityRedirectPath", "/identity/roblox/callback") or "").strip()
     if not path.startswith("/"):

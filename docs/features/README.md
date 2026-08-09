@@ -24,6 +24,7 @@ If you want more specific "what does this actual file do?" docs, check:
 - events
 - best of
 - archive tools
+- Minecraft server status polling
 - public utility bits
 
 Look under:

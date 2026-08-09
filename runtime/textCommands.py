@@ -6,17 +6,35 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import discord
 
-from db.sqlite import dbPath as sqliteDbPath
+from db import sqlite as sqliteDb
 from runtime import interaction as interactionRuntime
 from runtime import normalization
+from runtime.dailyMessage import DailyMessageTrigger
 from runtime.prefix import bg as prefixBg
 from runtime.prefix import bg_flag_sync as prefixBgFlagSync
 from runtime.prefix import copyserver as prefixCopyserver
 from runtime.prefix import runtime_admin as prefixRuntimeAdmin
 from runtime.prefix import utility as prefixUtility
+
+_POTATO_USER_ID = 331660652672319488
+_POTATO_GENERAL_CHANNEL_ID = 1525783767971528764
+_POTATO_GREETING = "good to see you, mom"
+try:
+    _POTATO_TIMEZONE = ZoneInfo("America/Chicago")
+except ZoneInfoNotFoundError:
+    # Keeps the greeting usable on a minimal Windows install without IANA data.
+    _POTATO_TIMEZONE = timezone(timedelta(hours=-6), name="CST")
+_POTATO_GREETING_TRIGGER = DailyMessageTrigger(
+    key="potatoGreeting",
+    userId=_POTATO_USER_ID,
+    channelId=_POTATO_GENERAL_CHANNEL_ID,
+    content=_POTATO_GREETING,
+    timezoneInfo=_POTATO_TIMEZONE,
+)
 
 
 class TextCommandRouter:
@@ -106,6 +124,14 @@ class TextCommandRouter:
         token, _ = normalization.commandParts(content)
         return token
 
+    @staticmethod
+    async def handlePotatoGreeting(
+        message: discord.Message,
+        *,
+        nowUtc: datetime | None = None,
+    ) -> bool:
+        return await _POTATO_GREETING_TRIGGER.handle(message, now=nowUtc)
+
     def indexToken(self, content: str, index: int) -> str:
         return normalization.tokenAt(content, index)
 
@@ -176,7 +202,7 @@ class TextCommandRouter:
         return clipped or ["(log tail truncated)"]
 
     def _dbPath(self) -> Path:
-        return Path(sqliteDbPath)
+        return Path(sqliteDb.dbPath)
 
     def _buildJaneTerminalContent(self) -> str:
         now = datetime.now(timezone.utc)
@@ -204,7 +230,7 @@ class TextCommandRouter:
 
         lines = [
             f"Jane Terminal :: {now.strftime('%Y-%m-%d %H:%M:%S UTC')}",
-            f"status      ONLINE",
+            "status      ONLINE",
             f"uptime      {uptime}",
             f"ping        {latencyText}",
             f"guilds      {len(self.botClient.guilds)}",
