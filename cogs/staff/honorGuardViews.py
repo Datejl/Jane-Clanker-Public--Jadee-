@@ -748,6 +748,7 @@ class HonorGuardEventSubmitView(runtimeViewBases.OwnerLockedView):
         self.eventPointsBtn.disabled = True
 
     async def on_timeout(self) -> None:
+        print("============ACTION-TIMEOUT============")
         await self.cog.closeEventSubmit(self.eventId)
 
     def _refreshSectionOptions(self) -> None:
@@ -789,7 +790,7 @@ class HonorGuardEventSubmitView(runtimeViewBases.OwnerLockedView):
         await self._refreshMessage(interaction)
 
     async def _refreshMessage(self, interaction: discord.Interaction) -> None:
-        self.selectedUser = next((a for a in self.attendees if str(a.get("userId")) == str(self.selectedUserId) and a.get("participantRole") != "HOST"), None)
+        self.selectedUser = next((a for a in self.attendees if str(a.get("userId")) == str(self.selectedUserId)), None)
         if not self.selectedUser:
             return
         self.quotaPointsBtn.disabled = False
