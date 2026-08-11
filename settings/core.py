@@ -7,11 +7,11 @@ from .env import _envFlag, _envInt, _envText
 token = _envText("DISCORD_BOT_TOKEN")
 
 # Primary servers.
-serverId = 0
+serverId = 1522106789162778724
 # JANE_TEST_GUILD_ID lets each machine point at its own dev guild.
 # Falls back to the shared default below.
-serverIdTesting = 0
-testGuildIds = []
+serverIdTesting = 1522106789162778724
+testGuildIds = [1522106789162778724]
 
 
 # == Credentials / External APIs ==
@@ -47,7 +47,7 @@ orientationApiPort = _envInt("JANE_ORIENTATION_API_PORT", 24003)
 
 # == Command Access / Runtime ==
 # Allowed servers for command usage.
-allowedCommandGuildIds = []
+allowedCommandGuildIds = [1522106789162778724]
 
 # Reserved runtime override users.
 overridingUserIds = []
@@ -67,7 +67,7 @@ temporaryCommandLockEnabled = False
 temporaryCommandAllowedUserIds = []
 
 # Runtime / diagnostics access.
-errorMirrorUserId = 0
+errorMirrorUserId = 822496730767163485
 janeTerminalAllowedUserId = errorMirrorUserId
 opsAllowedUserIds = []
 runtimeControlAllowedUserIds = []
@@ -188,12 +188,12 @@ anrorsMemberRoleId = 0  # ANRO Recruitment Services
 anrorsRmPlusRoleId = 0  # ANRORS RM+
 
 # Honor Guard roles.
-honorGuardReviewerRoleId = 0 # HG Personnel Office
-honorGuardReviewerPingRoleId = 0 # HG Personnel Office
-honorGuardRoleId = 0 # ANROHG Division
-honorGuardSeniorGuardsmanRoleIds = []
-honorGuardPlatoonSergeantRoleId = 0 # Platoon Sergeant
-honorGuardParadeOfficerPlusRoleIds = []
+honorGuardReviewerRoleId = 1522108697231364257 # HG Personnel Office
+honorGuardReviewerPingRoleId = 1522108697231364257 # HG Personnel Office
+honorGuardRoleId = 1522120337746038856 # ANROHG Division
+honorGuardSeniorGuardsmanRoleIds = [1522108891981414500, 1536823395931652217]
+honorGuardPlatoonSergeantRoleId = 1522108522152591472 # Platoon Sergeant
+honorGuardParadeOfficerPlusRoleIds = [1522108608588812460, 1536813822676050011, 1536813711468273674, 1536813956088467536, 1536814236334956684]
 
 # ANRD role placeholders (for future role -> ORBAT rank sync).
 anrdRoleProbationaryId = 0
