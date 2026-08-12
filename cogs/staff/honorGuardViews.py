@@ -748,7 +748,6 @@ class HonorGuardEventSubmitView(runtimeViewBases.OwnerLockedView):
         self.eventPointsBtn.disabled = True
 
     async def on_timeout(self) -> None:
-        print("============ACTION-TIMEOUT============")
         await self.cog.closeEventSubmit(self.eventId)
 
     def _refreshSectionOptions(self) -> None:
@@ -823,6 +822,8 @@ class HonorGuardEventSubmitView(runtimeViewBases.OwnerLockedView):
                 view=self,
             )
         )
+        await self.updateMessage(interaction)
+        self.attendees = await self.cog._clockInEngine.listAttendees(int(self.eventId))
     
     @discord.ui.button(
         label="Edit Event Points",
@@ -842,6 +843,7 @@ class HonorGuardEventSubmitView(runtimeViewBases.OwnerLockedView):
                 view=self,
             )
         )
+        self.attendees = await self.cog._clockInEngine.listAttendees(int(self.eventId))
     
     @discord.ui.button(
         label="Submit",
@@ -874,6 +876,12 @@ class HonorGuardEventPointsModal(discord.ui.Modal, title="Edit Points"):
         self.type = type
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
+        self.currentAttendess = await self.cog._clockInEngine.listAttendees(self.eventId)
+        currentUser = next((user for user in self.currentAttendess if str(self.user.get("userId")) == str(user.get("userId"))), None,)
+        if not currentUser:
+            await _safeInteractionReply(interaction, "This attendee wasn't found in attandence records.")
+            return
+                
         raw = str(self.pointsInput.value or "").strip()
         try:
             points = float(raw)
@@ -888,7 +896,7 @@ class HonorGuardEventPointsModal(discord.ui.Modal, title="Edit Points"):
         except ValueError:
             await _safeInteractionReply(interaction, "Points must be a number.")
             return
-        await self.cog.handleEditPoints(interaction, self.eventId, self.user, points, self.type)
+        await self.cog.handleEditPoints(interaction, self.eventId, currentUser, points, self.type)
         await self.view.updateMessage(self.original_interaction)
 
 class HonorGuardEventFinishModal(discord.ui.Modal, title="Finish Event"):
