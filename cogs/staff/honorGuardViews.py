@@ -844,11 +844,51 @@ class HonorGuardEventSubmitView(runtimeViewBases.OwnerLockedView):
             )
         )
         self.attendees = await self.cog._clockInEngine.listAttendees(int(self.eventId))
+
+    @discord.ui.button(
+        label="Edit All Quota Points",
+        style=discord.ButtonStyle.secondary,
+        row=2,
+        custom_id="honorguard_event_submit:quota_points_all",
+    )
+    async def quotaAllPointsBtn(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await interactionRuntime.safeInteractionSendModal(
+            interaction,
+            HonorGuardEventPointsAllModal(
+                cog=self.cog,
+                eventId=self.eventId,
+                attendees=self.attendees,
+                type="QUOTA",
+                original_interaction=interaction,
+                view=self,
+            )
+        )
+        self.attendees = await self.cog._clockInEngine.listAttendees(int(self.eventId))
+
+    @discord.ui.button(
+        label="Edit All Event Points",
+        style=discord.ButtonStyle.secondary,
+        row=2,
+        custom_id="honorguard_event_submit:event_points_all",
+    )
+    async def eventAllPointsBtn(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await interactionRuntime.safeInteractionSendModal(
+            interaction,
+            HonorGuardEventPointsAllModal(
+                cog=self.cog,
+                eventId=self.eventId,
+                attendees=self.attendees,
+                type="EVENT",
+                original_interaction=interaction,
+                view=self,
+            ),
+        )
+        self.attendees = await self.cog._clockInEngine.listAttendees(int(self.eventId))
     
     @discord.ui.button(
         label="Submit",
         style=discord.ButtonStyle.success,
-        row=2,
+        row=3,
         custom_id="honorguard_event_submit:submit",
     )
     async def submitBtn(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
@@ -876,8 +916,8 @@ class HonorGuardEventPointsModal(discord.ui.Modal, title="Edit Points"):
         self.type = type
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        self.currentAttendess = await self.cog._clockInEngine.listAttendees(self.eventId)
-        currentUser = next((user for user in self.currentAttendess if str(self.user.get("userId")) == str(user.get("userId"))), None,)
+        self.currentAttendees = await self.cog._clockInEngine.listAttendees(self.eventId)
+        currentUser = next((user for user in self.currentAttendees if str(self.user.get("userId")) == str(user.get("userId"))), None,)
         if not currentUser:
             await _safeInteractionReply(interaction, "This attendee wasn't found in attandence records.")
             return
@@ -897,6 +937,45 @@ class HonorGuardEventPointsModal(discord.ui.Modal, title="Edit Points"):
             await _safeInteractionReply(interaction, "Points must be a number.")
             return
         await self.cog.handleEditPoints(interaction, self.eventId, currentUser, points, self.type)
+        await self.view.updateMessage(self.original_interaction)
+
+class HonorGuardEventPointsAllModal(discord.ui.Modal, title="Edit Points"):
+    pointsInput = discord.ui.TextInput(
+        label="New Points",
+        style=discord.TextStyle.short,
+        required=True,
+        max_length=5,
+    )
+
+    def __init__(self, cog: "HonorGuardCog", eventId: int, attendees: list[dict], type: str, original_interaction: discord.Interaction, view: discord.ui.View):
+        super().__init__()
+        self.cog = cog
+        self.eventId = int(eventId)
+        self.attendees = attendees
+        self.original_interaction = original_interaction
+        self.view = view
+        if(type == "QUOTA"):
+            self.pointsInput.default = str(0) # fix later
+        else:
+            self.pointsInput.default = str(0) # fix later
+        self.type = type
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        raw = str(self.pointsInput.value or "").strip()
+        try:
+            points = float(raw)
+            if self.type == "QUOTA":
+                if points % 0.5 != 0:
+                    await _safeInteractionReply(interaction, "Quota points must be in increments of 0.5.")
+                    return
+            else:
+                if points % 1 != 0:
+                    await _safeInteractionReply(interaction, "Event points must be whole numbers.")
+                    return
+        except ValueError:
+            await _safeInteractionReply(interaction, "Points must be a number.")
+            return
+        await self.cog.handleEditAllPoints(interaction, self.eventId, points, self.type)
         await self.view.updateMessage(self.original_interaction)
 
 class HonorGuardEventFinishModal(discord.ui.Modal, title="Finish Event"):
