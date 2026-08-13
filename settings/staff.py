@@ -163,11 +163,11 @@ johnEventLogChannelId = 0
 johnClankerBotId = 0
 
 honorGuardEnabled = True
-honorGuardCommandGuildIds = [1522106789162778724]
-honorGuardReviewChannelId = 1522107090695360613
-honorGuardLogChannelId = 1522106972256735353
-honorGuardArchiveChannelId = 1536809417088041063
-honorGuardOrbatAuditChannelId = 1522106972256735353
+honorGuardCommandGuildIds = []
+honorGuardReviewChannelId = 1532741062173393064
+honorGuardLogChannelId = 1517125777504862238
+honorGuardArchiveChannelId = 1517125777504862238
+honorGuardOrbatAuditChannelId = 1517125777504862238
 honorGuardSpreadsheetId = _envText(
     "HONOR_GUARD_SPREADSHEET_ID",
     "1yYLTHgrsA_Qo6Ag4gHNZFBRx6ZwllLxyrIs3cI9edkU",
@@ -343,20 +343,20 @@ honorGuardNcoExamScreenAssistPoints = 2
 # Discord role IDs used to bucket a Honor Guard attendee at clock-in time.
 # A user is classified by the first matching bucket in order: enlisted, nco, officer.
 honorGuardEnlistedRoleIds: list[int] = [
-    1536813412963721256, # Junior Guardsman
-    1522108347447382036  # Guardsman
+    1477788769641037826, # Junior Guardsman
+    1477788768256917786  # Guardsman
 ]
 honorGuardNcoRoleIds: list[int] = [
-    1522108891981414500, # Senior Guardsman
-    1536823395931652217, # Platoon Corporal
-    1522108522152591472  # Platoon Sergeant
+    1477788766583259309, # Senior Guardsman
+    1533539146856140870, # Platoon Corporal
+    1478133203788107827  # Platoon Sergeant
 ]
 honorGuardOfficerRoleIds: list[int] = [
-	1522108608588812460, # Parade Officer
-	1536813822676050011, # Parade Captain
-	1536813711468273674, # Parade Marshal
-	1536813956088467536, # Inspector General
-	1536814236334956684  # HG Commandant
+	1477788764804743400, # Parade Officer
+	1533539376502669312, # Parade Captain
+	1477788762774835333, # Parade Marshal
+	1477788760866427192, # Inspector General
+	1477788754805788875  # HG Commandant
 ]
 
 honorGuardChannelId: int = 1522107009988690060
