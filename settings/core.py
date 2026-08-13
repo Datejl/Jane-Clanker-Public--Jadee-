@@ -188,12 +188,12 @@ anrorsMemberRoleId = 0  # ANRO Recruitment Services
 anrorsRmPlusRoleId = 0  # ANRORS RM+
 
 # Honor Guard roles.
-honorGuardReviewerRoleId = 1528759952288649399 # HG Personnel Office
-honorGuardReviewerPingRoleId = 1528759952288649399 # HG Personnel Office
-honorGuardRoleId = 1475960246563246243 # ANROHG Division
-honorGuardSeniorGuardsmanRoleIds = [1477788766583259309, 1533539146856140870] # Senior Guardsman & Platoon Corporal
-honorGuardPlatoonSergeantRoleId = 1478133203788107827 # Platoon Sergeant
-honorGuardParadeOfficerPlusRoleIds = [1477788764804743400, 1533539376502669312, 1477788762774835333, 1477788760866427192, 1477788754805788875]
+honorGuardReviewerRoleId = 1522108697231364257 # HG Personnel Office
+honorGuardReviewerPingRoleId = 1522108697231364257 # HG Personnel Office
+honorGuardRoleId = 1522120337746038856 # ANROHG Division
+honorGuardSeniorGuardsmanRoleIds = [1522108891981414500, 1536823395931652217]
+honorGuardPlatoonSergeantRoleId = 1522108522152591472 # Platoon Sergeant
+honorGuardParadeOfficerPlusRoleIds = [1522108608588812460, 1536813822676050011, 1536813711468273674, 1536813956088467536, 1536814236334956684]
 
 # ANRD role placeholders (for future role -> ORBAT rank sync).
 anrdRoleProbationaryId = 0
